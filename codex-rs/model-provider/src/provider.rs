@@ -13,6 +13,8 @@ use codex_login::CodexAuth;
 use codex_login::GatewayAuthManager;
 use codex_login::WorkspaceRoutingRequest;
 use codex_login::default_client::ClientRedirectPolicy;
+use codex_model_provider_info::DEEPSEEK_DEFAULT_MODEL;
+use codex_model_provider_info::DEEPSEEK_PROVIDER_NAME;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_models_manager::cache::ModelsCache;
 use codex_models_manager::manager::OpenAiModelsManager;
@@ -455,6 +457,10 @@ impl ConfiguredModelProvider {
         }
     }
 
+    fn is_deepseek(&self) -> bool {
+        self.info.name == DEEPSEEK_PROVIDER_NAME
+    }
+
     fn create_models_manager(
         &self,
         config_model_catalog: Option<ModelsResponse>,
@@ -500,6 +506,9 @@ impl ModelProvider for ConfiguredModelProvider {
     }
 
     fn approval_review_preferred_model(&self) -> &'static str {
+        if self.is_deepseek() {
+            return DEEPSEEK_DEFAULT_MODEL;
+        }
         if self
             .auth_manager
             .as_ref()
@@ -510,6 +519,20 @@ impl ModelProvider for ConfiguredModelProvider {
         } else {
             DEFAULT_APPROVAL_REVIEW_PREFERRED_MODEL
         }
+    }
+
+    fn memory_extraction_preferred_model(&self) -> &'static str {
+        if self.is_deepseek() {
+            return DEEPSEEK_DEFAULT_MODEL;
+        }
+        DEFAULT_MEMORY_EXTRACTION_PREFERRED_MODEL
+    }
+
+    fn memory_consolidation_preferred_model(&self) -> &'static str {
+        if self.is_deepseek() {
+            return DEEPSEEK_DEFAULT_MODEL;
+        }
+        DEFAULT_MEMORY_CONSOLIDATION_PREFERRED_MODEL
     }
 
     fn auth_manager(&self) -> Option<Arc<AuthManager>> {

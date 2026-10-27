@@ -31,7 +31,6 @@ lazy_static! {
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .chain(app_tooltip())
         .collect();
     static ref ALL_TOOLTIPS: Vec<&'static str> = {
         let mut tips = Vec::new();
@@ -59,11 +58,6 @@ pub(crate) fn preferred_tooltip<R: Rng + ?Sized>(
 ) -> Option<String> {
     if let Some(announcement) = announcement::fetch_announcement_tip(plan) {
         return Some(announcement);
-    }
-
-    // Leave small chance for a random tooltip to be shown.
-    if rng.random_ratio(/*numerator*/ 8, /*denominator*/ 10) {
-        return app_tooltip().map(str::to_string);
     }
 
     None

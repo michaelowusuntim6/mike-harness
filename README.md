@@ -130,6 +130,7 @@ Default config lives at `~/.mike/config.toml`:
 - model: `deepseek-v4.1-flash`
 - approval policy: `never`; sandbox: `workspace-write` (network enabled)
 - analytics, feedback, update checks, web search: disabled
+- approval auto-review / Guardian prewarm: disabled (no OpenAI reviewer model)
 - only the DeepSeek model is present in the picker
 - `~/.mike` projects are pre-trusted
 
@@ -168,8 +169,8 @@ The bridge exposes:
 ```bash
 # Rust unit tests for the changed crates
 cd ~/mike-harness/codex-rs
-cargo test -p codex-model-provider-info -p codex-models-manager \
-  -p codex-core --lib -- --test-threads=4
+cargo test -p codex-model-provider-info -p codex-model-provider \
+  -p codex-models-manager -p codex-core --lib -- --test-threads=4
 
 # Bridge parser/protocol tests
 cd ~/Deepseek-API

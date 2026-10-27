@@ -67,6 +67,7 @@ multi_agent_v2 = false
 apps = false
 plugins = false
 tool_search = false
+guardian_approval = false
 
 [model_providers.mike_test]
 name = "Mike Mock"

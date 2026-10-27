@@ -38,6 +38,10 @@ experimental_request_user_input = { enabled = false }
 update_plan = { enabled = true }
 
 [features]
+memories = false
+tui_multi_backend = false
+worktrees = false
+guardian_approval = false
 daemon_auto_start = false
 goals = false
 view_image = false
