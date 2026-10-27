@@ -83,6 +83,11 @@ const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+pub const DEEPSEEK_PROVIDER_ID: &str = "deepseek";
+pub const DEEPSEEK_PROVIDER_NAME: &str = "DeepSeek";
+pub const DEEPSEEK_BASE_URL: &str = "http://127.0.0.1:8000/v1";
+pub const DEEPSEEK_API_KEY: &str = "sk-local";
+pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek-v4.1-flash";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
 const AMAZON_BEDROCK_RUNTIME_PROVIDER_NAME: &str = "Amazon Bedrock Runtime";
@@ -601,6 +606,49 @@ other non-default provider fields are not supported"
         }
     }
 
+    /// Built-in provider for the local Mike DeepSeek bridge. It speaks the
+    /// Responses API at http://127.0.0.1:8000/v1 and never touches OpenAI auth.
+    pub fn create_deepseek_provider() -> ModelProviderInfo {
+        let base_url = std::env::var("MIKE_BASE_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| DEEPSEEK_BASE_URL.to_string());
+        ModelProviderInfo {
+            name: DEEPSEEK_PROVIDER_NAME.into(),
+            base_url: Some(base_url),
+            model_catalog_url: None,
+            env_key: None,
+            env_key_instructions: Some(
+                "The local Mike bridge does not require a real key; it accepts `sk-local`."
+                    .into(),
+            ),
+            experimental_bearer_token: Some(DEEPSEEK_API_KEY.to_string().into()),
+            auth: None,
+            gateway_oauth: None,
+            aws: None,
+            wire_api: WireApi::Responses,
+            query_params: None,
+            http_headers: None,
+            env_http_headers: None,
+            request_max_retries: Some(2),
+            stream_max_retries: Some(2),
+            stream_idle_timeout_ms: Some(600_000),
+            websocket_connect_timeout_ms: None,
+            requires_openai_auth: false,
+            supports_websockets: false,
+            supports_standalone_web_search: false,
+            capabilities: Some(ModelProviderCapabilities {
+                external_web_access: Some(false),
+                remote_compaction: Some(RemoteCompactionSupport::Unsupported),
+            }),
+            project_id: None,
+            location: None,
+            credential_file: None,
+            include_internal_metadata: false,
+        }
+    }
+
     pub fn create_amazon_bedrock_provider(
         aws: Option<ModelProviderAwsAuthInfo>,
     ) -> ModelProviderInfo {
@@ -741,9 +789,10 @@ pub fn built_in_model_providers(
         P::create_amazon_bedrock_runtime_provider(/*aws*/ None);
     let gcp_provider = P::create_gcp_provider();
 
-    // Bundle OpenAI, supported cloud-hosted OpenAI backends, and local OSS providers.
-    // Other compatible providers can be added through `model_providers` in config.toml.
+    // The local DeepSeek bridge is the primary provider for Mike. Other
+    // Responses-compatible providers remain available for advanced use.
     [
+        (DEEPSEEK_PROVIDER_ID, P::create_deepseek_provider()),
         (OPENAI_PROVIDER_ID, openai_provider),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
         (GCP_PROVIDER_ID, gcp_provider),

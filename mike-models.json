@@ -1,0 +1,62 @@
+{
+  "models": [
+    {
+      "slug": "deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash",
+      "description": "DeepSeek V4.1 Flash via the local Mike bridge.",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 0,
+      "minimal_client_version": "0.0.0",
+      "shell_type": "unified_exec",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "input_modalities": [
+        "text"
+      ],
+      "supports_image_detail_original": false,
+      "supports_parallel_tool_calls": false,
+      "supports_reasoning_summaries": false,
+      "supports_reasoning_summary_parameter": false,
+      "supports_reasoning_effort_updates": false,
+      "supports_search_tool": false,
+      "supports_experimental_context": false,
+      "use_responses_lite": false,
+      "prefer_websockets": false,
+      "support_verbosity": false,
+      "default_verbosity": null,
+      "default_reasoning_level": null,
+      "supported_reasoning_levels": [],
+      "default_reasoning_summary": "none",
+      "additional_speed_tiers": [],
+      "service_tiers": [],
+      "default_service_tier": null,
+      "include_skills_usage_instructions": false,
+      "include_plugin_usage_instructions": false,
+      "include_apps_usage_instructions": false,
+      "context_window": 500000,
+      "max_context_window": 500000,
+      "auto_compact_token_limit": 400000,
+      "effective_context_window_percent": 95,
+      "truncation_policy": {
+        "mode": "bytes",
+        "limit": 20000
+      },
+      "experimental_supported_tools": [],
+      "tool_mode": null,
+      "multi_agent_version": null,
+      "multi_agent_reasoning_effort": null,
+      "node_repl_auto_review_required": false,
+      "node_repl_disabled": true,
+      "guardian": null,
+      "auto_review_model_override": null,
+      "model_specialty": null,
+      "comp_hash": null,
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "You are mike, an autonomous coding agent running in the Mike CLI on the user's own machine. Mike is a local, free DeepSeek harness: the model is DeepSeek V4.1 Flash, reached through a local bridge. You are expected to be precise, safe, and genuinely helpful.\n\n# How you work\n\n- You share one workspace with the user. Inspect it before changing it.\n- You DO things with tools. Do not describe how to do a task when you can do it.\n- Read a file before editing it. Use the `apply_patch` tool for every file edit.\n- Use the provided shell tool for commands, tests, and repository inspection.\n- Never guess paths or APIs. Use file listing, search, and read tools to establish facts.\n- Keep changes focused on the user's request. Do not refactor unrelated code.\n- For multi-step work, create a plan and keep its status current as you go.\n- Before the first tool call, send a short progress update in plain text (1-2 sentences).\n- Do not print fake tool output, raw tool schemas, or XML/JSON control envelopes to the user.\n- If a command fails, diagnose the failure and try a reasonable fix before giving up.\n\n# Quality bar\n\n- Prefer the root-cause fix over a superficial patch.\n- Add or update tests when the project has tests and the change warrants it.\n- Verify your work by building, testing, or running the affected code when feasible.\n- Preserve existing style and conventions. Never add license headers.\n- Do not commit, push, or change git history unless the user asks.\n\n# Completion\n\nWhen the task is fully done, call the `task_complete` tool with a concise summary of what changed and how it was verified. If the user asked a question or the turn is purely conversational, answer directly; do not call tools just to fill a turn.\n\nIf you still have work to do, keep calling tools. Do not stop at a plan or a partial edit.\n"
+      }
+    }
+  ]
+}

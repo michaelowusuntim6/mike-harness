@@ -1,0 +1,57 @@
+# Mike — local DeepSeek coding agent.
+# Installed as ~/.mike/config.toml and used via CODEX_HOME=~/.mike.
+
+model = "deepseek-v4.1-flash"
+model_provider = "deepseek"
+model_catalog_json = "/home/mike/.mike/mike-models.json"
+
+# The local harness runs on your machine; it should not ask for OpenAI login
+# or OpenAI-specific approvals. Workspace-write still confines file edits.
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+web_search = "disabled"
+check_for_update_on_startup = false
+
+[sandbox_workspace_write]
+network_access = true
+
+[tui]
+animations = false
+
+[tui.effects]
+welcome = false
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
+
+[skills]
+include_instructions = false
+
+[agents]
+enabled = false
+
+[tools]
+experimental_request_user_input = { enabled = false }
+update_plan = { enabled = true }
+
+[features]
+daemon_auto_start = false
+goals = false
+view_image = false
+image_generation = false
+multi_agent = false
+multi_agent_v2 = false
+apps = false
+plugins = false
+tool_search = false
+
+# Pre-trust the home tree and this checkout. Other folders still show the
+# normal one-time trust prompt.
+[projects."/home/mike"]
+trust_level = "trusted"
+
+[projects."/home/mike/mike-harness"]
+trust_level = "trusted"

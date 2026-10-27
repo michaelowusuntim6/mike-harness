@@ -1,6 +1,8 @@
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
+use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelMessages;
 use codex_protocol::openai_models::ModelVisibility;
@@ -96,8 +98,11 @@ fn is_h1_heading(line: &str) -> bool {
 
 /// Build a minimal fallback model descriptor for missing/unknown slugs.
 pub fn model_info_from_slug(slug: &str) -> ModelInfo {
-    warn!("Unknown model {slug} is used. This will use fallback model metadata.");
-    ModelInfo {
+    let is_deepseek = slug.starts_with("deepseek");
+    if !is_deepseek {
+        warn!("Unknown model {slug} is used. This will use fallback model metadata.");
+    }
+    let mut info = ModelInfo {
         slug: slug.to_string(),
         display_name: slug.to_string(),
         description: None,
@@ -145,7 +150,31 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         tool_mode: None,
         multi_agent_version: None,
         multi_agent_reasoning_effort: None,
+    };
+
+    if is_deepseek {
+        info.display_name = "DeepSeek V4.1 Flash".to_string();
+        info.description =
+            Some("DeepSeek V4.1 Flash via the local Mike bridge.".to_string());
+        info.visibility = ModelVisibility::List;
+        info.priority = 0;
+        info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+        info.supports_reasoning_summary_parameter = false;
+        info.default_reasoning_summary = ReasoningSummary::None;
+        info.context_window = Some(500_000);
+        info.max_context_window = Some(500_000);
+        info.auto_compact_token_limit = Some(400_000);
+        info.include_apps_usage_instructions = false;
+        info.include_skills_usage_instructions = false;
+        info.include_plugin_usage_instructions = false;
+        info.supports_search_tool = false;
+        info.input_modalities = vec![InputModality::Text];
+        info.truncation_policy =
+            TruncationPolicyConfig::bytes(/*limit*/ 20_000);
+        info.used_fallback_model_metadata = false;
     }
+
+    info
 }
 
 fn local_model_messages() -> ModelMessages {

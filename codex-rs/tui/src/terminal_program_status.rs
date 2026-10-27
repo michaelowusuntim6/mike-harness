@@ -247,7 +247,7 @@ impl Command for SetTerminalProgramStatus<'_> {
         }
         write!(
             f,
-            "\x1b]7501;state={}:app=codex",
+            "\x1b]7501;state={}:app=mike",
             self.status.protocol_state()
         )?;
         if let ProgramStatus::Blocked(kind) = self.status {
