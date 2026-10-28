@@ -18,7 +18,6 @@ model_reasoning_effort = "none"
 network_access = true
 
 [tui]
-animations = false
 status_line = ["model", "context-tokens", "current-dir", "thread-name"]
 
 [tui.effects]

@@ -3556,7 +3556,8 @@ mod tests {
         pane.render(area, &mut buf);
 
         let bufs = snapshot_buffer(&buf);
-        assert!(bufs.contains("• Working"), "expected Working header");
+        // The row is prefixed by the animated progress glyph, so match the header only.
+        assert!(bufs.contains("Working"), "expected Working header: {bufs:?}");
 
         pane.reset_status_timer(Duration::from_secs(/*secs*/ 42));
         pane.hide_status_indicator();

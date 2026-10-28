@@ -32,6 +32,7 @@ from .openai_format import MOCK_TITLE_JSON, is_title_request
 
 from .toolcall import (
     StreamParser,
+    _clean_arguments as clean_arguments,
     extract_thinking,
     looks_like_tool_syntax,
     parse_tool_calls,
@@ -428,6 +429,9 @@ def _build_history(body: dict) -> tuple[list[str], list[str], dict[str, str], st
             else:
                 raw_input = item.get("input")
                 arguments = {"input": raw_input if isinstance(raw_input, str) else ""}
+            # Replayed history may contain markup the model leaked into an
+            # earlier call; clean it so the transcript does not teach the bug.
+            arguments = clean_arguments(arguments)
             envelope = json.dumps(
                 {"name": name, "arguments": arguments}, ensure_ascii=False
             )
@@ -538,6 +542,8 @@ def _normalize_calls(
         args = call.get("arguments")
         if not isinstance(args, dict):
             args = {}
+        else:
+            args = clean_arguments(args)
         if name.lower() == "task_complete":
             summary = str(args.get("summary") or "").strip() or summary
             continue

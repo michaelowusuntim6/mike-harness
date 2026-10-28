@@ -7,7 +7,7 @@ Working (0s • esc to interrupt)
 [Span::from("Working"), Span::from(" "), Span::from("(0s • ").dim(), Span::from("esc").fg(Color::Rgb(240, 240, 240)).bold().not_dim(), Span::from(" to interrupt)").dim()]
 
 animations=true, shimmer=false, progress=true
-• Working (0s • esc to interrupt)
+⠋ Working (0s • esc to interrupt)
 [Span::from("Working"), Span::from(" "), Span::from("(0s • ").dim(), Span::from("esc").fg(Color::Rgb(240, 240, 240)).bold().not_dim(), Span::from(" to interrupt)").dim()]
 
 animations=true, shimmer=true, progress=false

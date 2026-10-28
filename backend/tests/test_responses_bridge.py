@@ -279,6 +279,100 @@ def test_reasoning_items_are_replayed_in_the_prompt():
     assert "<reasoning>\nI checked the file.\n</reasoning>" in prompt
 
 
+def test_dsml_parser_matches_reference_spaced_form():
+    block = (
+        "<｜DSML｜ calls>\n"
+        '<｜DSML｜ invoke name="exec_command">\n'
+        '<｜DSML｜ parameter name="cmd" string="true">pwd</｜DSML｜ parameter>\n'
+        "</｜DSML｜ invoke>\n"
+        "</｜DSML｜ calls>"
+    )
+    calls, clean = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "pwd"}}]
+    assert clean == ""
+
+
+def test_dsml_parser_tight_tags_raw_json_and_missing_string_attribute():
+    block = (
+        "<｜DSML｜tool_calls>"
+        '<｜DSML｜invoke name="update_plan">'
+        '<｜DSML｜parameter name="steps" string="false">'
+        '[{"step": "a", "status": "pending"}]</｜DSML｜parameter>'
+        '<｜DSML｜parameter name="note">plain text</｜DSML｜parameter>'
+        "</｜DSML｜invoke>"
+        "</｜DSML｜tool_calls>"
+    )
+    calls, clean = parse_tool_calls(block)
+    assert calls == [
+        {
+            "name": "update_plan",
+            "arguments": {
+                "steps": [{"step": "a", "status": "pending"}],
+                "note": "plain text",
+            },
+        }
+    ]
+    assert clean == ""
+
+
+def test_dsml_empty_invoke_has_empty_arguments():
+    block = (
+        '<｜DSML｜ calls><｜DSML｜ invoke name="exec_command">'
+        "</｜DSML｜ invoke></｜DSML｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {}}]
+
+
+def test_dsml_value_with_orphan_double_bar_tag_is_cleaned():
+    block = (
+        '<｜DSML｜ calls>\n<｜DSML｜ invoke name="exec_command">\n'
+        '<｜DSML｜ parameter name="cmd" string="true">'
+        "pwd</｜｜DSML｜｜></｜DSML｜ parameter>\n"
+        "</｜DSML｜ invoke>\n</｜DSML｜ calls>"
+    )
+    calls, clean = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "pwd"}}]
+    assert "DSML" not in clean
+
+
+def test_dsml_ignores_trailing_garbage_after_block():
+    block = (
+        '<｜DSML｜ calls><｜DSML｜ invoke name="exec_command">'
+        '<｜DSML｜ parameter name="cmd" string="true">pwd</｜DSML｜ parameter>'
+        "</｜DSML｜ invoke></｜DSML｜ calls> done </｜｜DSML｜｜>"
+    )
+    calls, clean = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "pwd"}}]
+    assert "DSML" not in clean
+    assert "done" in clean
+
+
+def test_orphaned_dsml_in_json_arguments_is_stripped():
+    envelope = json.dumps(
+        {"name": "exec_command", "arguments": {"cmd": "pwd</｜｜DSML｜｜>"}}
+    )
+    calls, clean = parse_tool_calls(f"<tool_call>\n{envelope}\n</tool_call>")
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "pwd"}}]
+    assert clean == ""
+
+    client = FakeClient([[("response", f"<tool_call>\n{envelope}\n</tool_call>")]])
+    events = events_of(_response_events(client, base_body(tools=TOOLS)))
+    emitted = [
+        event["item"]
+        for event in events
+        if event["type"] == "response.output_item.done"
+        and event["item"]["type"] == "function_call"
+    ]
+    assert json.loads(emitted[0]["arguments"]) == {"cmd": "pwd"}
+    text = "".join(
+        event.get("delta", "")
+        for event in events
+        if event["type"] == "response.output_text.delta"
+    )
+    assert "DSML" not in text
+
+
 def test_dsml_accepts_doubled_and_tripled_bars():
     for bars in ("\uff5c", "\uff5c\uff5c", "\uff5c\uff5c\uff5c"):
         dsml = (

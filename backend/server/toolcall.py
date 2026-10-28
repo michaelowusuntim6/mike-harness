@@ -36,9 +36,13 @@ def _tag_name(raw_tag: str) -> tuple[str, bool]:
     if re.match(r"<\s*/?\s*tool_result\b", low):
         return "tool_result", raw.startswith("</")
     if "dsml" in low:
-        if "calls" in low:
-            return "tool_call", raw.startswith("</")
-        return "dsml_inner", raw.startswith("</")
+        closing = raw.startswith("</")
+        if closing:
+            # Only the block close leaves tool-call mode; inner closes are noise.
+            return ("tool_call", True) if "calls" in low else ("dsml_inner", True)
+        # Any opening DSML tag starts hidden tool markup, as in the reference
+        # parser, which enters its tool-call stage on the bare DSML token.
+        return "tool_call", False
     if "▁of▁" in raw:
         closing = "end▁of▁" in low
         if "thinking" in low:
@@ -171,6 +175,46 @@ class StreamParser:
 
 
 # --------------------------------------------------------------------------- #
+# Orphaned DSML fragments                                                      #
+# --------------------------------------------------------------------------- #
+
+# The model occasionally emits a stray closing tag (often with doubled bars)
+# inside an argument value, e.g. {"cmd": "pwd</｜｜DSML｜｜>"}. Such fragments
+# are markup, never data, so they are removed from argument values.
+_DSML_ORPHAN_TAG_RE = re.compile(
+    r"</?\s*(?:\uff5c)+DSML(?:\uff5c)+[^<>]*>", re.IGNORECASE
+)
+_DSML_BARE_TOKEN_RE = re.compile(r"(?:\uff5c)+DSML(?:\uff5c)+", re.IGNORECASE)
+
+
+def _strip_orphan_dsml(text: str) -> str:
+    cleaned = _DSML_ORPHAN_TAG_RE.sub("", text or "")
+    return _DSML_BARE_TOKEN_RE.sub("", cleaned)
+
+
+def _clean_arg_string(value: str) -> str:
+    """Remove leaked DSML markup from one argument string.
+
+    Values the model left untouched are returned verbatim; when a fragment was
+    removed, surrounding whitespace from the markup is trimmed as well.
+    """
+    cleaned = _strip_orphan_dsml(value)
+    if cleaned == value:
+        return value
+    return cleaned.strip()
+
+
+def _clean_arguments(value):
+    if isinstance(value, str):
+        return _clean_arg_string(value)
+    if isinstance(value, list):
+        return [_clean_arguments(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _clean_arguments(item) for key, item in value.items()}
+    return value
+
+
+# --------------------------------------------------------------------------- #
 # <tool_call> JSON envelopes                                                   #
 # --------------------------------------------------------------------------- #
 
@@ -204,128 +248,175 @@ def _loads_tool_obj(raw: str) -> Optional[dict]:
             args = {"input": args}
     if not isinstance(args, dict):
         args = {"input": args} if isinstance(args, str) else {}
-    return {"name": str(name), "arguments": args}
+    return {"name": _clean_arg_string(str(name)), "arguments": _clean_arguments(args)}
 
 
 # --------------------------------------------------------------------------- #
-# DeepSeek DSML (V4 and V4.1)                                                  #
+# DeepSeek DSML (V4 and V4.1), modeled on deepseek-recipe output_parser.rs      #
 # --------------------------------------------------------------------------- #
+#
+# The reference parser is a byte-level state machine: outside tool calls it
+# looks for the DSML token; inside the call block it consumes markup and
+# assembles JSON arguments from ``invoke name="..."`` / ``parameter name="..."``
+# tags, with ``string="true"`` values treated as JSON strings and
+# ``string="false"`` values spliced in as raw JSON. Unmatched markup is
+# skipped, so stray spaces, newlines, orphaned tags, and trailing garbage never
+# reach the arguments. The scanner below applies the same rules to a complete
+# response string (the bridge parses after the upstream turn ends).
 
-# The web model sometimes doubles the full-width bars ("<｜｜DSML｜｜" or even
-# triples), so every tag accepts one or more U+FF5C bars.
-_DSML_TOKEN = r"\uff5c+DSML\uff5c+"
-_DSML_OPEN_RE = re.compile(
-    r"<\s*" + _DSML_TOKEN + r"\s*invoke\b([^<>]*?)(/?)>", re.IGNORECASE
+# The token is ``｜DSML｜`` in the reference; the web model sometimes doubles or
+# even triples the full-width bars, so every occurrence accepts one or more.
+_DSML_TOKEN = r"(?:\uff5c)+DSML(?:\uff5c)+"
+_DSML_TAG_RE = re.compile(
+    r"<\s*(?P<closing>/)?\s*" + _DSML_TOKEN +
+    r"\s*(?P<word>invoke|parameter|tool_calls|calls)?"
+    r"(?P<attrs>[^<>]*?)>",
+    re.IGNORECASE | re.DOTALL,
 )
-_DSML_CLOSE_RE = re.compile(
-    r"</\s*" + _DSML_TOKEN + r"\s*invoke\s*>", re.IGNORECASE
+_DSML_ATTR_RE = re.compile(
+    r"""([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s/>]+))"""
 )
-_DSML_PARAM_RE = re.compile(
-    r"<\s*" + _DSML_TOKEN + r"\s*parameter\b([^<>]*?)>(.*?)(?:"
-    r"</\s*" + _DSML_TOKEN + r"\s*parameter\s*>|$)",
-    re.DOTALL | re.IGNORECASE,
-)
-_DSML_ATTR_RE = re.compile(r'([A-Za-z_][\w.-]*)\s*=\s*"([^"]*)"')
 _DSML_BLOCK_RE = re.compile(
     r"<\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>.*?"
     r"</\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>",
     re.DOTALL | re.IGNORECASE,
 )
-_DSML_CALLS_OPEN_RE = re.compile(
+_DSML_INVOKE_BLOCK_RE = re.compile(
+    r"<\s*" + _DSML_TOKEN + r"\s*invoke\b[^<>]*>.*?"
+    r"</\s*" + _DSML_TOKEN + r"\s*invoke\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_DSML_PARAM_BLOCK_RE = re.compile(
+    r"<\s*" + _DSML_TOKEN + r"\s*parameter\b[^<>]*>.*?"
+    r"</\s*" + _DSML_TOKEN + r"\s*parameter\s*>",
+    re.DOTALL | re.IGNORECASE,
+)
+_DSML_BLOCK_OPEN_RE = re.compile(
     r"<\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>", re.IGNORECASE
 )
-_DSML_INVOKE_OPEN_BARE_RE = re.compile(
+_DSML_INVOKE_OPEN_RE = re.compile(
     r"<\s*" + _DSML_TOKEN + r"\s*invoke\b", re.IGNORECASE
 )
-_DSML_PARAM_ANY_RE = re.compile(
-    r"</?\s*" + _DSML_TOKEN + r"\s*parameter\b[^<>]*>", re.IGNORECASE
+_DSML_PARAM_OPEN_RE = re.compile(
+    r"<\s*" + _DSML_TOKEN + r"\s*parameter\b", re.IGNORECASE
 )
 
 
-def _attr_value(attrs: str, key: str) -> Optional[str]:
-    for name, value in _DSML_ATTR_RE.findall(attrs or ""):
-        if name.lower() == key.lower():
-            return value
-    return None
+def _parse_attrs(attrs: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for match in _DSML_ATTR_RE.finditer(attrs or ""):
+        value = next(
+            (group for group in match.groups()[1:] if group is not None), ""
+        )
+        values[match.group(1).lower()] = value
+    return values
 
 
-def _attrs_to_args(attrs: str) -> dict:
-    args: dict = {}
-    for name, value in _DSML_ATTR_RE.findall(attrs or ""):
-        if name.lower() in ("name", "string"):
-            continue
-        args[name] = value
-    return args
-
-
-def _parse_param_tags(body: str) -> dict:
-    args: dict = {}
-    for pm in _DSML_PARAM_RE.finditer(body or ""):
-        attrs = pm.group(1)
-        args[_attr_value(attrs, "name") or "value"] = _dsml_value(pm.group(2), attrs)
-    return args
+def _dsml_value(raw: str, is_string: bool):
+    value = _clean_arg_string(raw).strip()
+    if is_string:
+        return value
+    if not value:
+        return ""
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, ValueError):
+        # Reference splices raw JSON; malformed values degrade to text instead
+        # of breaking the whole call.
+        return value
 
 
 def parse_dsml_calls(text: str) -> list[dict]:
+    """Extract tools calls from native DSML markup (V4/V4.1, any bar width)."""
     text = text or ""
     calls: list[dict] = []
-    for m in _DSML_OPEN_RE.finditer(text):
-        attrs = m.group(1) or ""
-        self_closing = m.group(2) == "/"
-        name = _attr_value(attrs, "name")
-        if not name:
-            continue
+    current: Optional[dict] = None
+    in_value = False
+    value_name: Optional[str] = None
+    value_is_string = True
+    value_start = 0
+
+    def flush_value(end: int) -> None:
+        nonlocal in_value
+        if in_value and current is not None and value_name:
+            current["arguments"][value_name] = _dsml_value(
+                text[value_start:end], value_is_string
+            )
+        in_value = False
+
+    def flush_call() -> None:
+        nonlocal current
+        if current is not None:
+            calls.append(current)
+            current = None
+
+    for match in _DSML_TAG_RE.finditer(text):
+        closing = bool(match.group("closing"))
+        word = (match.group("word") or "").lower()
+        attrs = match.group("attrs") or ""
+        self_closing = attrs.rstrip().endswith("/")
         if self_closing:
-            calls.append({"name": name, "arguments": _attrs_to_args(attrs)})
+            attrs = attrs.rstrip()[:-1]
+
+        # A value ends at the next DSML tag of any kind. This is what turns
+        # "pwd</｜｜DSML｜｜>" into "pwd" even when the close tag is malformed.
+        if in_value:
+            flush_value(match.start())
+
+        if word in ("tool_calls", "calls"):
+            if closing:
+                flush_call()
             continue
-        close = _DSML_CLOSE_RE.search(text, m.end())
-        if close is not None:
-            body = text[m.end():close.start()]
-            calls.append({"name": name, "arguments": _parse_param_tags(body)})
-        else:
-            body = text[m.end():]
-            calls.append({"name": name, "arguments": _parse_param_tags(body)})
-            log.warning("tool_call_truncated name=%s", name)
+        if word == "invoke":
+            if closing:
+                flush_call()
+                continue
+            info = _parse_attrs(attrs)
+            name = info.get("name")
+            if not name:
+                continue
+            flush_call()
+            current = {"name": name, "arguments": {}}
+            if self_closing:
+                flush_call()
+            continue
+        if word == "parameter":
+            if closing or current is None:
+                continue
+            info = _parse_attrs(attrs)
+            name = info.get("name")
+            if not name:
+                continue
+            value_name = name
+            # Missing string="true" is treated as a string, the common intent.
+            value_is_string = info.get("string", "true").lower() != "false"
+            value_start = match.end()
+            in_value = True
+            continue
+        # Bare tag (e.g. "</｜｜DSML｜｜>"): markup with no meaning; the value
+        # that ended at it has already been flushed, and the tag itself is
+        # consumed by the scanner.
+
+    if in_value:
+        flush_value(len(text))
+    flush_call()
     return calls
 
 
-def _dsml_value(raw: str, attrs: str):
-    if re.search(r'string\s*=\s*"true"', attrs or "", re.IGNORECASE):
-        value = raw
-        if value.startswith("\n"):
-            value = value[1:]
-        return value[:-1] if value.endswith("\n") else value
-    try:
-        return json.loads(raw)
-    except Exception:
-        return raw
-
-
 def strip_dsml(text: str) -> str:
+    """Remove every DSML block or stray tag from visible content."""
     if not text:
         return text
     out = _DSML_BLOCK_RE.sub("", text)
-    out = re.sub(
-        r"<\s*" + _DSML_TOKEN + r"\s*invoke\b[^<>]*>.*?"
-        r"</\s*" + _DSML_TOKEN + r"\s*invoke\s*>",
-        "",
-        out,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    out = re.sub(
-        r"<\s*" + _DSML_TOKEN + r"\s*invoke\b[^<>]*/>",
-        "",
-        out,
-        flags=re.IGNORECASE,
-    )
-    m = _DSML_CALLS_OPEN_RE.search(out)
-    if m is not None:
-        out = out[:m.start()]
-    m = _DSML_INVOKE_OPEN_BARE_RE.search(out)
-    if m is not None:
-        out = out[:m.start()]
-    out = _DSML_PARAM_ANY_RE.sub("", out)
-    return out
+    out = _DSML_INVOKE_BLOCK_RE.sub("", out)
+    out = _DSML_PARAM_BLOCK_RE.sub("", out)
+    # A block left open by truncation swallows the remainder as markup.
+    for opener in (_DSML_BLOCK_OPEN_RE, _DSML_INVOKE_OPEN_RE, _DSML_PARAM_OPEN_RE):
+        found = opener.search(out)
+        if found is not None:
+            out = out[: found.start()]
+    out = _DSML_TAG_RE.sub("", out)
+    return _DSML_BARE_TOKEN_RE.sub("", out)
 
 
 def parse_tool_calls(text: str) -> tuple[list[dict], str]:
@@ -349,7 +440,10 @@ def parse_tool_calls(text: str) -> tuple[list[dict], str]:
                 clean = clean.replace(raw, "")
                 clean = re.sub(r"```(?:json)?\s*```", "", clean)
 
-    calls.extend(parse_dsml_calls(text))
+    # DSML outside a JSON envelope is a native tool call. Parsing only the
+    # remainder keeps markup leaked inside an envelope from becoming a second
+    # call; those fragments are cleaned from the arguments instead.
+    calls.extend(parse_dsml_calls(clean))
     clean = strip_dsml(clean)
     return calls, clean.strip()
 

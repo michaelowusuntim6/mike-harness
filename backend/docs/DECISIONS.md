@@ -837,3 +837,86 @@ from assistant text and `task_complete` summaries before display or storage.
 `docs/`, with README links pointing to `docs/DECISIONS.md` and
 `docs/RECON.md`. Ignore rules cover the complete session directory, persistent
 prompt history, local state, and common editor/cache temporary files.
+
+# v0.7 — reference DSML parser port + live TUI activity
+
+## v0.7 motivation
+
+The v0.3 parser was still regex-based and mis-parsed several real model
+outputs: spaced tags (`<｜DSML｜ calls>`), self-closing or truncated invokes,
+parameters without `string="true"`, and — most visibly — orphaned closing
+fragments leaking into argument values, e.g. `{"cmd": "pwd</｜｜DSML｜｜>"}`,
+which reached the shell and failed. The TUI also showed a static
+`Working (0s)` with no motion, which looked like a hang.
+
+## v0.7 D1. Parser modeled on the official deepseek-recipe state machine
+
+**Decision.** `backend/server/toolcall.py` now parses DSML with a linear
+scanner that follows the semantics of
+`deepseek-recipe/src/stream/output_parser.rs` and `processor.rs`: tag
+recognition for both `<｜DSML｜tool_calls>`/`<｜DSML｜invoke>` and the spaced
+V4.1 form, `string="true"` values taken verbatim, `string="false"` (or absent)
+values JSON-decoded with a raw-string fallback, empty invokes yielding `{}`,
+values flushed when the next DSML tag appears, and everything after the closing
+block ignored. Any run of `｜` counts as the delimiter, because the model
+sometimes emits `｜｜DSML｜｜` or more.
+
+**Deliberate deviation.** The reference drops parameters lacking a `string`
+attribute; we default them to string, because the bridge sees whole responses
+(not a token stream) and being forgiving loses fewer tool calls.
+
+**Rationale.** The reference is the authoritative description of the format
+DeepSeek actually emits; behavior-matching it removes the recurring migration
+failures. It is stdlib-only (regex precompiled patterns + a small scanner), so
+no new dependency was added.
+
+## v0.7 D2. Orphan `｜DSML｜` fragments are stripped from arguments
+
+**Decision.** Every extracted argument (name, string, list, dict, recursively)
+passes through `_clean_arguments`, which removes stray
+`</?｜+DSML｜+…>` tags and bare `｜+DSML｜+` tokens and trims the result. The
+same cleaning is applied when normalizing parsed calls and when replaying
+history to upstream. `</｜｜DSML｜｜>` after `pwd` therefore yields `pwd`.
+
+**Rationale.** Orphan tags are what motivated this task; they must never reach
+tool arguments, regardless of which parse path produced them (JSON envelope,
+fenced JSON, DSML, or history replay).
+
+**Alternatives.** Cleaning only in the DSML parser — rejected: the JSON
+envelope path reproduces the same bug when the model inlines the fragment in a
+string.
+
+## v0.7 D3. TUI spinner and live timer
+
+**Decision.** `StatusIndicatorWidget` renders the existing braille glyph
+(`motion.rs` FRAMES, 100 ms) before the header whenever
+`MotionMode::Animated`, and `render()` always schedules a frame (32 ms when
+progress/shimmer are on, 1 s otherwise) so the elapsed timer ticks live from
+`StatusTimer::last_resume_at` and the glyph advances. Both disappear at turn
+completion because the row is only drawn while a turn is active.
+
+**Config change.** `animations = false` was removed from `mike-config.toml` and
+`~/.mike/config.toml`; the master switch therefore defaults to on, and
+`[tui.effects] welcome = false` still suppresses the welcome animation.
+
+**Rationale.** The timer was static because the row only scheduled 1 s frames
+when a display start existed and progress was disabled by config. Reusing the
+existing glyph keeps one spinner implementation across the TUI.
+
+## v0.7 verification
+
+- `cd backend && venv/bin/python -m pytest tests/` → 129 passed.
+- New regression tests: orphan fragment cleanup
+  (`{"cmd": "pwd</｜｜DSML｜｜>"}` → `{"cmd": "pwd"}`) asserted on the parsed
+  call and on the streamed SSE events, spaced/tight tags, raw JSON and missing
+  `string`, empty invoke, and trailing garbage.
+- `cargo test -p codex-tui --lib status_indicator` → 26 passed with updated
+  snapshots (`•` replaced by the first braille frame `⠋`); snapshots remain
+  deterministic because the tests pin the timer to the first frame.
+- `cargo build --release -p codex-cli` (56m) installed as `~/.local/bin/mike`.
+- Manual PTY run (`Run pwd`): all ten braille frames observed at ~100 ms, the
+  label ticked `0s` → `5s` live, `pwd` returned `/tmp/mike-smoke`, and the row
+  was replaced by `Worked for 5s` at completion. A multi-step follow-up
+  (`apply_patch` create `smoke.txt` with `hello`, read it back) executed
+  end-to-end and the file contained exactly `hello\n`, confirming tool calls
+  parse cleanly through the new parser.

@@ -26,8 +26,7 @@ use crate::key_hint::ShortcutHint;
 use crate::line_truncation::line_width;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
-use crate::motion::activity_indicator;
+use crate::motion::loading_glyph;
 use crate::render::renderable::Renderable;
 use crate::text_formatting::capitalize_first;
 use crate::tui::FrameRequester;
@@ -238,13 +237,14 @@ impl StatusIndicator<'_> {
             MotionMode::from_animations_enabled(row.animations_enabled && row.effects.shimmer);
 
         let mut spans = Vec::with_capacity(5);
-        if let Some(indicator) = activity_indicator(
-            Some(self.timer.last_resume_at),
-            progress,
-            ReducedMotionIndicator::Hidden,
-        ) {
-            spans.push(indicator);
-            spans.push(" ".into());
+        // Braille spinner: cycles every 100ms while the turn is running and is
+        // absent entirely when progress animations are off.
+        if progress == MotionMode::Animated {
+            let glyph = loading_glyph(self.timer.last_resume_at, progress, &row.frame_requester);
+            if !glyph.is_empty() {
+                spans.push(glyph.into());
+                spans.push(" ".into());
+            }
         }
         spans.extend(summary_shimmer(
             &row.header,
@@ -304,18 +304,18 @@ impl Renderable for StatusIndicator<'_> {
         if area.is_empty() {
             return;
         }
-        if self.row.animations_enabled || self.timer.display_started_at.is_some() {
-            let interval_ms = if self.row.animations_enabled
-                && (self.row.effects.progress || self.row.effects.shimmer)
-            {
-                32
-            } else {
-                1_000
-            };
-            self.row
-                .frame_requester
-                .schedule_frame_in(Duration::from_millis(interval_ms));
-        }
+        // Keep the elapsed label live even with animations disabled: the row is
+        // only rendered while a turn is active, so a 1s tick ends with the turn.
+        let interval_ms = if self.row.animations_enabled
+            && (self.row.effects.progress || self.row.effects.shimmer)
+        {
+            32
+        } else {
+            1_000
+        };
+        self.row
+            .frame_requester
+            .schedule_frame_in(Duration::from_millis(interval_ms));
         Paragraph::new(Text::from(self.lines(area.width))).render(area, buf);
     }
 }

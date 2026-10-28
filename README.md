@@ -46,9 +46,18 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - Non-interactive mode: `mike exec`, `mike review`, `mike resume`.
 - Tools: `exec_command`, `write_stdin`, `apply_patch`, `update_plan`,
   `task_complete`.
-- Prompted tool calling with JSON envelopes and DeepSeek DSML fallback,
-  including truncated-call recovery, one completion nudge, and empty-stream
+- Prompted tool calling with JSON envelopes and DeepSeek DSML fallback. The
+  DSML parser is modeled on the official
+  [deepseek-recipe](https://github.com/deepseek-ai/deepseek-recipe) state
+  machine: it handles tight and spaced tags (`<｜DSML｜tool_calls>` /
+  `<｜DSML｜ calls>`), `string="true"` vs raw JSON parameters, empty invokes,
+  truncated calls, and trailing garbage. Stray `｜DSML｜` fragments left inside
+  extracted arguments (for example `{"cmd": "pwd</｜｜DSML｜｜>"}`) are stripped,
+  so the shell receives `pwd`. Includes one completion nudge and empty-stream
   retries.
+- Live activity indicator: a 100 ms braille spinner and a live `Working (Xs)`
+  elapsed timer run while the model generates or tools execute, and stop at
+  turn completion (`[tui] animations = true`, the default).
 - Reasoning replay when DeepThink is enabled.
 - DeepThink on/off toggle: `/think` flips the bridge's `thinking` flag between
   off and on, matching the DeepSeek web chat toggle.
