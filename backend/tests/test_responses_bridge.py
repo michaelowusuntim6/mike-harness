@@ -279,6 +279,83 @@ def test_reasoning_items_are_replayed_in_the_prompt():
     assert "<reasoning>\nI checked the file.\n</reasoning>" in prompt
 
 
+def test_dsml_accepts_doubled_and_tripled_bars():
+    for bars in ("\uff5c", "\uff5c\uff5c", "\uff5c\uff5c\uff5c"):
+        dsml = (
+            f"<{bars}DSML{bars} calls>\n"
+            f'<{bars}DSML{bars} invoke name="exec_command">\n'
+            f'<{bars}DSML{bars} parameter name="cmd" string="true">ls'
+            f"</{bars}DSML{bars} parameter>\n"
+            f"</{bars}DSML{bars} invoke>\n"
+            f"</{bars}DSML{bars} calls>"
+        )
+        calls, clean = parse_tool_calls(dsml)
+        assert calls == [{"name": "exec_command", "arguments": {"cmd": "ls"}}]
+        assert "DSML" not in clean
+
+    double = (
+        "<\uff5c\uff5cDSML\uff5c\uff5c calls>\n"
+        '<\uff5c\uff5cDSML\uff5c\uff5c invoke name="exec_command">\n'
+        '<\uff5c\uff5cDSML\uff5c\uff5c parameter name="cmd" string="true">pwd'
+        "</\uff5c\uff5cDSML\uff5c\uff5c parameter>\n"
+        "</\uff5c\uff5cDSML\uff5c\uff5c invoke>\n"
+        "</\uff5c\uff5cDSML\uff5c\uff5c calls>"
+    )
+    client = FakeClient([[("response", double)]])
+    events = events_of(_response_events(client, base_body(tools=TOOLS)))
+    calls = [
+        event["item"]
+        for event in events
+        if event["type"] == "response.output_item.done"
+        and event["item"]["type"] == "function_call"
+    ]
+    assert calls[0]["name"] == "exec_command"
+    assert json.loads(calls[0]["arguments"]) == {"cmd": "pwd"}
+
+
+def test_native_codex_prompts_are_stripped_from_the_prompt():
+    native = (
+        "<permissions instructions>sandbox workspace-write</permissions instructions>\n"
+        "<collaboration_mode>default</collaboration_mode>\n"
+        "You are Codex, based on GPT-5. " + "Native tool instructions. " * 500
+    )
+    history = [
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": native}],
+        },
+        {
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": "You are Codex, native prompt."}],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "<environment_context><cwd>/tmp/p</cwd></environment_context>",
+                }
+            ],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "do the task"}],
+        },
+    ]
+    body = base_body(history=history, tools=TOOLS)
+    body["instructions"] = "You are Codex, native system prompt."
+    prompt, _ = _build_prompt(body, _prepare_tools(TOOLS)[0])
+    assert "permissions instructions" not in prompt
+    assert "collaboration_mode" not in prompt
+    assert "You are Codex" not in prompt
+    assert "<environment_context>" in prompt
+    assert "<tool_call>" in prompt
+
+
 def test_parser_handles_truncated_dsml_and_json_envelope():
     calls, clean = parse_tool_calls(
         'before\n<tool_call>{"name":"exec_command","arguments":{"cmd":"pwd"}}'

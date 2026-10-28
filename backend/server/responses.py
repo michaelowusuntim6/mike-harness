@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from typing import Any, Iterable
@@ -100,6 +101,58 @@ MALFORMED_NUDGE = (
     "Your last message contained tool syntax but no executable tool call. "
     "Emit a single valid <tool_call> envelope or a DSML invoke block now."
 )
+
+# Codex sends its native-tool system prompt (base instructions, permissions,
+# collaboration mode, ...) as developer messages. Replaying it beside the
+# prompted JSON protocol teaches DeepSeek a tool syntax it cannot call, so the
+# model imitates Codex's native prompts (e.g. hallucinated DSML) instead of
+# emitting <tool_call> envelopes. These fragments are stripped before the
+# transcript is flattened; small project context (environment, user config)
+# survives.
+_NOISY_DEVELOPER_TAGS = (
+    "permissions instructions",
+    "collaboration_mode",
+    "model_switch",
+    "managed_developer_instructions",
+    "persistent_mode",
+    "apps_instructions",
+    "plugins_instructions",
+    "skills_instructions",
+    "multi_agent_mode",
+    "multi_agent_role",
+    "environments_instructions",
+    "git_attribution",
+    "realtime_conversation",
+    "personality_spec",
+    "token_budget",
+    "rollout_budget",
+    "context_window",
+)
+_NATIVE_PROMPT_PREFIXES = (
+    "You are Codex",
+    "You are an AI assistant accessed via an API",
+)
+MAX_DEVELOPER_CONTEXT_CHARS = 6_000
+
+
+def _clean_developer_text(text: str) -> str:
+    """Strip Codex's native-tool prompt, keeping concise project context."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+    for tag in _NOISY_DEVELOPER_TAGS:
+        pattern = rf"<{re.escape(tag)}>.*?</{re.escape(tag)}>"
+        cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+    low = cleaned.lower()
+    if any(f"<{tag}>" in low for tag in _NOISY_DEVELOPER_TAGS):
+        # Unclosed noisy block: do not risk leaking the rest of the prompt.
+        return ""
+    cleaned = cleaned.strip()
+    if cleaned.startswith(_NATIVE_PROMPT_PREFIXES):
+        return ""
+    if len(cleaned) > MAX_DEVELOPER_CONTEXT_CHARS:
+        return ""
+    return cleaned
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -311,8 +364,10 @@ def _build_history(body: dict) -> tuple[list[str], list[str], dict[str, str], st
         return f"<reasoning>\n{text}\n</reasoning>\n"
 
     instructions = body.get("instructions")
-    if isinstance(instructions, str) and instructions.strip():
-        dev_parts.append(instructions.strip())
+    if isinstance(instructions, str):
+        cleaned_instructions = _clean_developer_text(instructions)
+        if cleaned_instructions:
+            dev_parts.append(cleaned_instructions)
 
     for item in items:
         if not isinstance(item, dict):
@@ -322,10 +377,9 @@ def _build_history(body: dict) -> tuple[list[str], list[str], dict[str, str], st
             role = str(item.get("role") or "user").lower()
             text = _text_of_content(item.get("content")).strip()
             if role in ("developer", "system"):
-                if text and not text.lstrip().startswith(
-                    ("<skills_instructions>", "<plugins_instructions>", "<apps_instructions>")
-                ):
-                    dev_parts.append(text)
+                cleaned = _clean_developer_text(text)
+                if cleaned:
+                    dev_parts.append(cleaned)
                 continue
             if role == "user":
                 if text:

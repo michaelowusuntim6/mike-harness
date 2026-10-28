@@ -211,32 +211,34 @@ def _loads_tool_obj(raw: str) -> Optional[dict]:
 # DeepSeek DSML (V4 and V4.1)                                                  #
 # --------------------------------------------------------------------------- #
 
-_DSML_TOKEN = "\uff5cDSML\uff5c"  # full-width bar U+FF5C
+# The web model sometimes doubles the full-width bars ("<｜｜DSML｜｜" or even
+# triples), so every tag accepts one or more U+FF5C bars.
+_DSML_TOKEN = r"\uff5c+DSML\uff5c+"
 _DSML_OPEN_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*invoke\b([^<>]*?)(/?)>", re.IGNORECASE
+    r"<\s*" + _DSML_TOKEN + r"\s*invoke\b([^<>]*?)(/?)>", re.IGNORECASE
 )
 _DSML_CLOSE_RE = re.compile(
-    r"</\s*\uff5cDSML\uff5c\s*invoke\s*>", re.IGNORECASE
+    r"</\s*" + _DSML_TOKEN + r"\s*invoke\s*>", re.IGNORECASE
 )
 _DSML_PARAM_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*parameter\b([^<>]*?)>(.*?)(?:"
-    r"</\s*\uff5cDSML\uff5c\s*parameter\s*>|$)",
+    r"<\s*" + _DSML_TOKEN + r"\s*parameter\b([^<>]*?)>(.*?)(?:"
+    r"</\s*" + _DSML_TOKEN + r"\s*parameter\s*>|$)",
     re.DOTALL | re.IGNORECASE,
 )
 _DSML_ATTR_RE = re.compile(r'([A-Za-z_][\w.-]*)\s*=\s*"([^"]*)"')
 _DSML_BLOCK_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>.*?"
-    r"</\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>",
+    r"<\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>.*?"
+    r"</\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>",
     re.DOTALL | re.IGNORECASE,
 )
 _DSML_CALLS_OPEN_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>", re.IGNORECASE
+    r"<\s*" + _DSML_TOKEN + r"\s*(?:tool_calls|calls)\s*>", re.IGNORECASE
 )
 _DSML_INVOKE_OPEN_BARE_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*invoke\b", re.IGNORECASE
+    r"<\s*" + _DSML_TOKEN + r"\s*invoke\b", re.IGNORECASE
 )
 _DSML_PARAM_ANY_RE = re.compile(
-    r"</?\s*\uff5cDSML\uff5c\s*parameter\b[^<>]*>", re.IGNORECASE
+    r"</?\s*" + _DSML_TOKEN + r"\s*parameter\b[^<>]*>", re.IGNORECASE
 )
 
 
@@ -304,14 +306,14 @@ def strip_dsml(text: str) -> str:
         return text
     out = _DSML_BLOCK_RE.sub("", text)
     out = re.sub(
-        r"<\s*\uff5cDSML\uff5c\s*invoke\b[^<>]*>.*?"
-        r"</\s*\uff5cDSML\uff5c\s*invoke\s*>",
+        r"<\s*" + _DSML_TOKEN + r"\s*invoke\b[^<>]*>.*?"
+        r"</\s*" + _DSML_TOKEN + r"\s*invoke\s*>",
         "",
         out,
         flags=re.DOTALL | re.IGNORECASE,
     )
     out = re.sub(
-        r"<\s*\uff5cDSML\uff5c\s*invoke\b[^<>]*/>",
+        r"<\s*" + _DSML_TOKEN + r"\s*invoke\b[^<>]*/>",
         "",
         out,
         flags=re.IGNORECASE,
