@@ -58,6 +58,7 @@ fn request_with_metadata_and_source(
         text: None,
         client_metadata: Some(HashMap::from([("padding".to_string(), "x".to_string())])),
         access_programs: None,
+        conversation_id: None,
     }
 }
 

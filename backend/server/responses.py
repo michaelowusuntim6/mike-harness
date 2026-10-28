@@ -280,16 +280,18 @@ def _custom_input(args: dict) -> str:
     return json.dumps(args, ensure_ascii=False)
 
 
+def _input_items(body: dict) -> list[Any]:
+    raw_input = body.get("input")
+    if isinstance(raw_input, str):
+        return [{"type": "message", "role": "user", "content": raw_input}]
+    if isinstance(raw_input, list):
+        return raw_input
+    return []
+
+
 def _build_history(body: dict) -> tuple[list[str], list[str], dict[str, str], str]:
     """Return (developer_parts, dialogue, call_names, last_action)."""
-    raw_input = body.get("input")
-    items: list[Any]
-    if isinstance(raw_input, str):
-        items = [{"type": "message", "role": "user", "content": raw_input}]
-    elif isinstance(raw_input, list):
-        items = raw_input
-    else:
-        items = []
+    items = _input_items(body)
 
     dev_parts: list[str] = []
     dialogue: list[str] = []
@@ -416,6 +418,47 @@ def _build_prompt(body: dict, specs: list[dict]) -> tuple[str, str]:
     conversation = "\n\n".join(dialogue) if dialogue else "(no messages)"
     parts.append("## Conversation\n\n" + conversation)
     return "\n\n".join(parts).strip() + "\n\nAssistant:", last_action
+
+
+def _is_assistant_output(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    kind = item.get("type") or ("message" if "role" in item else "")
+    if kind == "message":
+        return str(item.get("role") or "").lower() == "assistant"
+    return kind in (
+        "reasoning",
+        "function_call",
+        "custom_tool_call",
+        "local_shell_call",
+    )
+
+
+def _build_continuation_prompt(body: dict) -> tuple[str, str] | None:
+    """Build the prompt for a resumed upstream thread.
+
+    Codex resends the full transcript on every request, but the DeepSeek chat
+    already holds everything up to the last assistant output.  Send only the
+    messages that follow it (a new user turn, tool results, or both).
+    """
+    items = _input_items(body)
+    start = 0
+    for index, item in enumerate(items):
+        if _is_assistant_output(item):
+            start = index + 1
+    if start == 0:
+        # No assistant output in the transcript: this is the first request, or
+        # the client's history does not match an existing upstream thread.
+        return None
+    tail = [item for item in items[start:] if isinstance(item, dict)]
+    if not tail:
+        return None
+    _, dialogue, _, last_action = _build_history({"input": tail})
+    if not dialogue:
+        return None
+    return "\n\n".join(dialogue) + "\n\nAssistant:", last_action
+
+
 
 
 def _nudged_prompt(prompt: str, raw_response: str, nudge: str) -> str:
@@ -559,7 +602,11 @@ def _emit_tool_call(call: dict) -> str:
 
 
 def _emit_completed(
-    response_id: str, prompt: str, raw: str, reasoning: str
+    response_id: str,
+    prompt: str,
+    raw: str,
+    reasoning: str,
+    conversation_id: str | None = None,
 ) -> str:
     input_tokens = _est_tokens(prompt)
     output_tokens = _est_tokens(raw + reasoning)
@@ -569,6 +616,7 @@ def _emit_completed(
             "response": {
                 "id": response_id,
                 "end_turn": True,
+                "conversation_id": conversation_id,
                 "usage": {
                     "input_tokens": input_tokens,
                     "input_tokens_details": None,
@@ -597,13 +645,31 @@ def _response_events(client, body: dict) -> Iterable[str]:
     response_id = _new_id("resp")
     # The web backend exposes one model; every accepted alias maps to it.
     specs, lookup = _prepare_tools(body.get("tools"))
-    prompt, last_action = _build_prompt(body, specs)
+    full_prompt, last_action = _build_prompt(body, specs)
+    raw_cid = body.get("conversation_id")
+    incoming_cid = raw_cid.strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
+    upstream_cid = incoming_cid
+    prompt = full_prompt
+    if incoming_cid:
+        continuation = _build_continuation_prompt(body)
+        if continuation is not None:
+            prompt = continuation[0]
+            log.info("responses: resuming upstream thread %s", incoming_cid[:8])
+        else:
+            log.warning(
+                "responses: conversation_id supplied without an assistant turn; "
+                "starting a fresh upstream thread"
+            )
+            upstream_cid = None
+    else:
+        log.info("responses: starting a fresh upstream thread")
     thinking = _request_thinking(body)
     live = last_action != "tool_output"
     after_tool = last_action == "tool_output"
     empty_attempts = 0
     malformed_retry = False
     nudge_count = 0
+    fresh_fallback_used = not incoming_cid
     current_prompt = prompt
     message_item_id = _new_id("msg")
     message_added = False
@@ -617,9 +683,15 @@ def _response_events(client, body: dict) -> Iterable[str]:
         stream_error: Exception | None = None
         streamed_text = False
         emitted_any = False
+        stream = None
 
         try:
-            stream = client.stream(current_prompt, model="default", thinking=thinking)
+            stream = client.stream(
+                current_prompt,
+                conversation_id=upstream_cid,
+                model=None if upstream_cid else "default",
+                thinking=thinking,
+            )
             for kind_chunk in stream.iter_events():
                 kind, chunk = kind_chunk
                 if not chunk:
@@ -663,6 +735,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
             stream_error = exc
             log.exception("responses: upstream stream failed")
 
+        returned_cid = getattr(stream, "conversation_id", None) if stream else None
         raw = "".join(raw_parts)
         event_reasoning = "".join(reasoning_parts)
         calls, clean = parse_tool_calls(raw)
@@ -675,6 +748,17 @@ def _response_events(client, body: dict) -> Iterable[str]:
                 message = f"DeepSeek stream failed: {stream_error}"
                 yield _emit_failed(response_id, message)
                 return
+            # An expired or unknown upstream thread must not wedge the client:
+            # fall back once to a fresh thread seeded with the full transcript.
+            if upstream_cid is not None and not fresh_fallback_used:
+                fresh_fallback_used = True
+                upstream_cid = None
+                current_prompt = full_prompt
+                empty_attempts = 0
+                log.warning(
+                    "responses: failed to resume upstream thread; retrying fresh"
+                )
+                continue
             empty_attempts += 1
             if empty_attempts < EMPTY_MAX_ATTEMPTS:
                 time.sleep(1.0)
@@ -693,6 +777,8 @@ def _response_events(client, body: dict) -> Iterable[str]:
             )
             if empty_attempts < EMPTY_MAX_ATTEMPTS:
                 time.sleep(1.0)
+                if upstream_cid is not None:
+                    current_prompt = "(continue)"
                 continue
             yield _emit_failed(
                 response_id,
@@ -701,6 +787,10 @@ def _response_events(client, body: dict) -> Iterable[str]:
                 code="empty_response",
             )
             return
+
+        if returned_cid:
+            upstream_cid = returned_cid
+            log.info("responses: upstream thread %s", returned_cid[:8])
 
         # A model that hallucinates tool syntax but emits no parseable call gets
         # one corrective retry, unless text has already been shown (avoiding a
@@ -713,7 +803,11 @@ def _response_events(client, body: dict) -> Iterable[str]:
             and looks_like_tool_syntax(raw)
         ):
             malformed_retry = True
-            current_prompt = _nudged_prompt(prompt, raw, MALFORMED_NUDGE)
+            current_prompt = (
+                MALFORMED_NUDGE
+                if upstream_cid
+                else _nudged_prompt(prompt, raw, MALFORMED_NUDGE)
+            )
             continue
 
         tool_calls, task_summary = _normalize_calls(calls, lookup)
@@ -726,7 +820,9 @@ def _response_events(client, body: dict) -> Iterable[str]:
             if reasoning:
                 yield from _emit_reasoning(reasoning)
             yield from _emit_text(final_text, streamed_text, message_item_id, message_added)
-            yield _emit_completed(response_id, current_prompt, raw, reasoning)
+            yield _emit_completed(
+                response_id, current_prompt, raw, reasoning, upstream_cid
+            )
             return
 
         if tool_calls:
@@ -735,21 +831,29 @@ def _response_events(client, body: dict) -> Iterable[str]:
             yield from _emit_text(clean, streamed_text, message_item_id, message_added)
             for call in tool_calls:
                 yield _emit_tool_call(call)
-            yield _emit_completed(response_id, current_prompt, raw, reasoning)
+            yield _emit_completed(
+                response_id, current_prompt, raw, reasoning, upstream_cid
+            )
             return
 
         # Text-only reply. After tool output it may be an early stop: give the
         # model exactly one nudge to keep working or finish explicitly.
         if after_tool and nudge_count == 0 and specs:
             nudge_count = 1
-            current_prompt = _nudged_prompt(prompt, raw, COMPLETION_NUDGE)
+            current_prompt = (
+                COMPLETION_NUDGE
+                if upstream_cid
+                else _nudged_prompt(prompt, raw, COMPLETION_NUDGE)
+            )
             live = False
             continue
 
         if reasoning:
             yield from _emit_reasoning(reasoning)
         yield from _emit_text(clean, streamed_text, message_item_id, message_added)
-        yield _emit_completed(response_id, current_prompt, raw, reasoning)
+        yield _emit_completed(
+            response_id, current_prompt, raw, reasoning, upstream_cid
+        )
         return
 
 

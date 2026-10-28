@@ -104,6 +104,9 @@ pub enum ResponseEvent {
         /// Did the model affirmatively end its turn? Some providers do not set this,
         /// so we rely on fallback logic when this is `None`.
         end_turn: Option<bool>,
+        /// Opaque upstream thread identifier, when the provider supplies one.
+        /// Replay it on the next request to keep a single upstream conversation.
+        conversation_id: Option<String>,
     },
     OutputTextDelta(String),
     ToolCallInputDelta {
@@ -301,6 +304,9 @@ pub struct ResponsesApiRequest {
     pub client_metadata: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub access_programs: Option<AccessPrograms>,
+    /// Non-standard extension used by local bridges to resume an upstream thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversation_id: Option<String>,
 }
 
 impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {

@@ -1107,6 +1107,7 @@ async fn responses_http_preserves_raw_tool_metadata_for_openai_custom_endpoint()
             codex_protocol::config_types::ReasoningSummary::None,
             /*service_tier*/ None,
             &responses_metadata,
+            /*conversation_id*/ None,
             &InferenceTraceContext::disabled(),
         )
         .await?;
@@ -1723,6 +1724,7 @@ async fn response_stream_records_last_model_feedback_ids() {
             token_usage: None,
             usage_metadata: None,
             end_turn: Some(true),
+            conversation_id: None,
         }),
     ]);
     let (mut stream, _) = super::map_response_events(
@@ -2241,6 +2243,7 @@ async fn intercepted_output_reaches_trace_and_websocket_bookkeeping() -> anyhow:
             token_usage: None,
             usage_metadata: None,
             end_turn: None,
+            conversation_id: None,
         }))
         .await?;
     drop(tx_event);
@@ -2325,4 +2328,77 @@ async fn inference_tools_changes_follow_full_specs_across_turns() {
             "step {index}"
         );
     }
+}
+
+#[tokio::test]
+async fn conversation_id_from_sse_is_replayed_on_the_next_request() -> anyhow::Result<()> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(/*status*/ 200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(concat!(
+                    "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp-1\"}}\n\n",
+                    "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp-1\",\"conversation_id\":\"conv-1\"}}\n\n",
+                )),
+        )
+        .expect(/*requests*/ 2)
+        .mount(&server)
+        .await;
+    let mut provider =
+        ModelProviderInfo::create_openai_provider(Some(format!("{}/v1", server.uri())));
+    provider.requires_openai_auth = false;
+    provider.supports_websockets = false;
+    let mut client = test_model_client(SessionSource::Cli);
+    Arc::get_mut(&mut client.state)
+        .expect("test client should have unique session state")
+        .provider = create_model_provider(provider, /*auth_manager*/ None);
+    let prompt = Prompt::default();
+    let responses_metadata = test_responses_metadata_for_client(
+        &client,
+        /*turn_id*/ None,
+        format!("{}:0", client.state.thread_id),
+        /*parent_thread_id*/ None,
+        TestCodexResponsesRequestKind::Turn,
+    );
+    let telemetry = test_session_telemetry();
+    let model_info = test_model_info();
+    let trace = InferenceTraceContext::disabled();
+    let mut session = client.new_session();
+
+    let mut conversation_id = None;
+    for _ in 0..2 {
+        let mut stream = session
+            .stream(
+                &prompt,
+                &model_info,
+                &telemetry,
+                /*effort*/ None,
+                codex_protocol::config_types::ReasoningSummary::None,
+                /*service_tier*/ None,
+                &responses_metadata,
+                conversation_id.as_deref(),
+                &trace,
+            )
+            .await?;
+        while let Some(event) = stream.next().await {
+            if let ResponseEvent::Completed {
+                conversation_id: returned,
+                ..
+            } = event?
+            {
+                conversation_id = returned;
+            }
+        }
+    }
+    assert_eq!(conversation_id.as_deref(), Some("conv-1"));
+
+    let requests = server.received_requests().await.expect("received requests");
+    assert_eq!(requests.len(), 2);
+    let first: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+    let second: serde_json::Value = serde_json::from_slice(&requests[1].body)?;
+    assert!(first.get("conversation_id").is_none());
+    assert_eq!(second["conversation_id"], json!("conv-1"));
+    Ok(())
 }

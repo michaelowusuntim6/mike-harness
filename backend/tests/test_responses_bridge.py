@@ -10,8 +10,9 @@ from server.toolcall import parse_tool_calls
 
 
 class FakeStream:
-    def __init__(self, events):
+    def __init__(self, events, conversation_id=None):
         self.events = events
+        self.conversation_id = conversation_id
 
     def iter_events(self):
         yield from self.events
@@ -19,14 +20,20 @@ class FakeStream:
 
 class FakeClient:
     def __init__(self, scripts):
-        self.scripts = [list(script) for script in scripts]
+        self.scripts = [
+            item if isinstance(item, dict) else {"events": list(item)}
+            for item in scripts
+        ]
         self.prompts: list[str] = []
+        self.conversation_ids: list[str | None] = []
 
-    def stream(self, prompt, model=None, thinking=False):
+    def stream(self, prompt, model=None, thinking=False, conversation_id=None):
         self.prompts.append(prompt)
+        self.conversation_ids.append(conversation_id)
         if not self.scripts:
             return FakeStream([("response", "No script left.")])
-        return FakeStream(self.scripts.pop(0))
+        script = self.scripts.pop(0)
+        return FakeStream(script["events"], script.get("conversation_id"))
 
 
 def events_of(gen):
@@ -168,6 +175,75 @@ def test_task_complete_summary_becomes_final_text():
         and event["item"]["type"] in ("function_call", "custom_tool_call")
         for event in events
     )
+
+
+def test_conversation_id_is_returned_and_resumed_with_only_new_turns():
+    history = base_body(text="My favorite color is blue.")["input"]
+    client = FakeClient(
+        [{"events": [("response", "Got it.")], "conversation_id": "conv-1"}]
+    )
+    events = events_of(_response_events(client, base_body(history=history, tools=TOOLS)))
+    completed = [event for event in events if event["type"] == "response.completed"]
+    assert completed[0]["response"]["conversation_id"] == "conv-1"
+    assert client.conversation_ids == [None]
+
+    history_with_answer = history + [
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Got it."}],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "What is my favorite color?"}],
+        },
+    ]
+    body = base_body(history=history_with_answer, tools=TOOLS)
+    body["conversation_id"] = "conv-1"
+    client.scripts.append({"events": [("response", "Blue.")], "conversation_id": "conv-2"})
+    events = events_of(_response_events(client, body))
+    completed = [event for event in events if event["type"] == "response.completed"]
+    assert completed[0]["response"]["conversation_id"] == "conv-2"
+
+    assert client.conversation_ids == [None, "conv-1"]
+    resumed_prompt = client.prompts[1]
+    assert resumed_prompt == "User: What is my favorite color?\n\nAssistant:"
+    assert "## Conversation" not in resumed_prompt
+
+
+def test_tool_result_continuation_sends_only_the_new_result():
+    tool_call = {
+        "type": "function_call",
+        "name": "exec_command",
+        "arguments": '{"cmd":"pwd"}',
+        "call_id": "call_1",
+    }
+    tool_output = {"type": "function_call_output", "call_id": "call_1", "output": "/tmp/p"}
+    history = base_body(text="where am I?")["input"] + [tool_call, tool_output]
+    envelope = json.dumps(
+        {"name": "task_complete", "arguments": {"summary": "It is /tmp/p."}}
+    )
+    client = FakeClient(
+        [{"events": [("response", f"<tool_call>\n{envelope}\n</tool_call>")],
+          "conversation_id": "conv-3"}]
+    )
+    body = base_body(history=history, tools=TOOLS)
+    body["conversation_id"] = "conv-1"
+    events_of(_response_events(client, body))
+    assert client.conversation_ids == ["conv-1"]
+    assert client.prompts[0].startswith("User:\n<tool_result")
+    assert "/tmp/p" in client.prompts[0]
+    assert "## Conversation" not in client.prompts[0]
+
+
+def test_conversation_id_without_assistant_history_starts_fresh():
+    client = FakeClient([[("response", "Hello.")]])
+    body = base_body(text="hi", tools=TOOLS)
+    body["conversation_id"] = "stale-thread"
+    events_of(_response_events(client, body))
+    assert client.conversation_ids == [None]
+    assert "## Conversation" in client.prompts[0]
 
 
 def test_empty_stream_retries_then_fails(monkeypatch):

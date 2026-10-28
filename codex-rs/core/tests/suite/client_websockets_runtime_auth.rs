@@ -145,6 +145,7 @@ async fn complete(
             harness.summary,
             /*service_tier*/ None,
             &turn_metadata(harness, /*turn_id*/ None),
+            /*conversation_id*/ None,
             &InferenceTraceContext::disabled(),
         )
         .await?;

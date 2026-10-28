@@ -268,6 +268,9 @@ async fn run_compact_task_inner_impl(
     world_state: Arc<WorldState>,
     compaction_metadata: CompactionTurnMetadata,
 ) -> CodexResult<String> {
+    // Summarisation must not append to (or continue) the live upstream thread;
+    // the compacted transcript seeds a fresh one for the next turn.
+    sess.set_conversation_id(/*conversation_id*/ None).await;
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -841,6 +844,7 @@ async fn drain_to_completed(
             turn_context.reasoning_summary(),
             turn_context.config.service_tier.clone(),
             responses_metadata,
+            /*conversation_id*/ None,
             // Rollout tracing currently models remote compaction only; local compaction streams
             // are left untraced until the reducer has a first-class local compaction lifecycle.
             &InferenceTraceContext::disabled(),

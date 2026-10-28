@@ -308,6 +308,7 @@ async fn run_remote_compaction_request_v2(
                 stream = http_executor.stream_responses_http(
                     &turn_state, auth_owner_generation, /*event_sender*/ None, prompt, &settings.model_info, &step_context.session_telemetry, effort,
                     settings.reasoning_summary, settings.service_tier.clone(), responses_metadata,
+                    /*conversation_id*/ None,
                     &trace,
                 ) => stream?,
             };
@@ -339,6 +340,7 @@ async fn run_remote_compaction_request_v2(
                 settings.reasoning_summary,
                 step_context.settings.service_tier.clone(),
                 responses_metadata,
+                /*conversation_id*/ None,
                 &InferenceTraceContext::disabled(),
             )
             .await
@@ -1305,6 +1307,7 @@ mod tests {
                     metadata: Some(serde_json::json!({ "extra": { "label": "example" } })),
                 }),
                 end_turn: Some(true),
+                conversation_id: None,
             }),
         ]);
 

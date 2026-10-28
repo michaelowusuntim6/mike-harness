@@ -366,6 +366,7 @@ impl MemoryStartupContext {
                 context.reasoning_summary,
                 context.service_tier.clone(),
                 &responses_metadata,
+                /*conversation_id*/ None,
                 &InferenceTraceContext::disabled(),
             )
             .await?;

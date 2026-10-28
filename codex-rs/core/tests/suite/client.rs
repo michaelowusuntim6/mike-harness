@@ -1879,6 +1879,7 @@ async fn send_request_with_provider(provider: ModelProviderInfo) {
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ None,
             &responses_metadata,
+            /*conversation_id*/ None,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
         .await
@@ -3461,6 +3462,7 @@ async fn azure_responses_request_does_not_store_and_preserves_prefixed_item_ids(
             summary.unwrap_or(ReasoningSummary::Auto),
             /*service_tier*/ None,
             &responses_metadata,
+            /*conversation_id*/ None,
             &codex_rollout_trace::InferenceTraceContext::disabled(),
         )
         .await

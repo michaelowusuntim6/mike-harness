@@ -4969,6 +4969,16 @@ impl Session {
         state.clone_history()
     }
 
+    pub(crate) async fn conversation_id(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        state.conversation_id.clone()
+    }
+
+    pub(crate) async fn set_conversation_id(&self, conversation_id: Option<String>) {
+        let mut state = self.state.lock().await;
+        state.conversation_id = conversation_id;
+    }
+
     /// Captures the history lifetime without exposing mutable session state.
     pub(crate) async fn history_reset(&self) -> (u64, CancellationToken) {
         let state = self.state.lock().await;

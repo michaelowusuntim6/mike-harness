@@ -113,6 +113,8 @@ struct ResponseCompleted {
     usage_metadata: Option<ResponseUsageMetadata>,
     #[serde(default)]
     end_turn: Option<bool>,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -471,6 +473,7 @@ pub fn process_responses_event(
                             } else {
                                 resp.end_turn
                             },
+                            conversation_id: resp.conversation_id,
                         }));
                     }
                     Err(err) => {
@@ -856,6 +859,7 @@ mod tests {
                 token_usage,
                 usage_metadata,
                 end_turn,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -1054,6 +1058,7 @@ mod tests {
                 token_usage,
                 usage_metadata,
                 end_turn,
+                ..
             }) => {
                 assert_eq!(response_id, "resp1");
                 assert!(token_usage.is_none());
@@ -1631,6 +1636,7 @@ mod tests {
                 token_usage: None,
                 usage_metadata: None,
                 end_turn: None,
+                ..
             } if response_id == "resp-1"
         );
     }
@@ -1672,6 +1678,7 @@ mod tests {
                 token_usage: None,
                 usage_metadata: None,
                 end_turn: None,
+                ..
             } if response_id == "resp-1"
         );
     }
@@ -1708,6 +1715,7 @@ mod tests {
                 token_usage: None,
                 usage_metadata: None,
                 end_turn: None,
+                ..
             } if response_id == "resp-1"
         );
     }
@@ -1744,6 +1752,7 @@ mod tests {
                 token_usage: None,
                 usage_metadata: None,
                 end_turn: None,
+                ..
             } if response_id == "resp-1"
         );
     }

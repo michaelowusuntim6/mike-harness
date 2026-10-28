@@ -2749,6 +2749,7 @@ async fn try_run_sampling_request(
     let mut request_token_usage = None;
     sess.set_server_reasoning_included(step_context.settings.model_info.use_responses_lite)
         .await;
+    let conversation_id = sess.conversation_id().await;
     let mut stream = match client_session
         .stream(
             prompt,
@@ -2758,6 +2759,7 @@ async fn try_run_sampling_request(
             step_context.settings.reasoning_summary,
             step_context.settings.service_tier.clone(),
             responses_metadata,
+            conversation_id.as_deref(),
             &inference_trace,
         )
         .instrument(trace_span!("stream_request"))
@@ -3211,8 +3213,12 @@ async fn try_run_sampling_request(
                 token_usage,
                 usage_metadata,
                 end_turn,
+                conversation_id,
             } => {
                 response_completed = true;
+                if conversation_id.is_some() {
+                    sess.set_conversation_id(conversation_id).await;
+                }
                 request_token_usage = token_usage.clone();
                 sess.services
                     .analytics_events_client

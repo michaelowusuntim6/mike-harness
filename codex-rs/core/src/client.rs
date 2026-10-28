@@ -441,6 +441,7 @@ fn responses_request_properties_mismatch(
         text: previous_text,
         client_metadata: _,
         access_programs: _,
+        conversation_id: _,
     } = previous;
     let ResponsesApiRequest {
         model: current_model,
@@ -458,6 +459,7 @@ fn responses_request_properties_mismatch(
         text: current_text,
         client_metadata: _,
         access_programs: _,
+        conversation_id: _,
     } = current;
 
     // Stream options control delivery for this response, not the context
@@ -1180,6 +1182,7 @@ impl ModelClient {
             text,
             client_metadata: Some(client_metadata),
             access_programs: None,
+            conversation_id: None,
         };
         Ok(request)
     }
@@ -1903,6 +1906,7 @@ impl ResponsesHttpExecutor<'_> {
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
+        conversation_id: Option<&str>,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
         let auth_manager = self.client.state.provider.auth_manager();
@@ -1964,6 +1968,7 @@ impl ResponsesHttpExecutor<'_> {
                 responses_metadata,
                 include_internal,
             )?;
+            request.conversation_id = conversation_id.map(str::to_owned);
             self.client.set_guardian_metadata(
                 &mut request.client_metadata,
                 responses_metadata.parent_response_id.as_deref(),
@@ -2492,6 +2497,7 @@ impl ModelClientSession {
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
         responses_metadata: &CodexResponsesMetadata,
+        conversation_id: Option<&str>,
         inference_trace: &InferenceTraceContext,
     ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
@@ -2533,6 +2539,7 @@ impl ModelClientSession {
                         summary,
                         service_tier,
                         responses_metadata,
+                        conversation_id,
                         inference_trace,
                     )
                     .await
@@ -2714,6 +2721,7 @@ where
                     token_usage,
                     usage_metadata,
                     end_turn,
+                    conversation_id,
                 }) => {
                     feedback_tags!(last_model_response_id = &response_id);
                     if let Some(usage) = &token_usage {
@@ -2737,6 +2745,7 @@ where
                             token_usage,
                             usage_metadata,
                             end_turn,
+                            conversation_id,
                         }))
                         .await
                         .is_err()
