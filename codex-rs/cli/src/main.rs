@@ -53,6 +53,7 @@ static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod app_cmd;
+mod backend;
 mod config_override_args;
 mod daemon_install;
 mod daemon_telemetry;
@@ -1044,6 +1045,25 @@ fn stage_str(stage: Stage) -> &'static str {
     }
 }
 
+/// Whether this invocation talks to the local model backend. Purely local
+/// commands (help, completion, login, MCP management, ...) never start it.
+fn needs_local_backend(subcommand: &Option<Subcommand>) -> bool {
+    matches!(
+        subcommand,
+        None | Some(
+            Subcommand::Agents(_)
+                | Subcommand::Exec(_)
+                | Subcommand::Review(_)
+                | Subcommand::Resume(_)
+                | Subcommand::Fork(_)
+                | Subcommand::AppServer(_)
+                | Subcommand::RemoteControl(_)
+                | Subcommand::ExecServer(_)
+                | Subcommand::Debug(_)
+        )
+    )
+}
+
 fn main() -> anyhow::Result<()> {
     codex_build_info::initialize!();
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
@@ -1110,6 +1130,11 @@ async fn cli_main(
     }
 
     let open_agents_overview = matches!(&subcommand, Some(Subcommand::Agents(_)));
+    let _backend = if root_remote.is_none() && needs_local_backend(&subcommand) {
+        Some(backend::BackendGuard::ensure()?)
+    } else {
+        None
+    };
     match subcommand {
         None | Some(Subcommand::Agents(_)) => {
             prepend_config_flags(

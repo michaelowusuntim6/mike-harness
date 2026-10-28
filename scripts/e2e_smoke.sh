@@ -79,7 +79,7 @@ TOML
 
 mkdir -p "$WORK/project"
 cd "$WORK/project"
-CODEX_HOME="$HOME_DIR" timeout 120 "$BIN" exec \
+CODEX_HOME="$HOME_DIR" MIKE_NO_BRIDGE=1 timeout 120 "$BIN" exec \
   --skip-git-repo-check \
   --dangerously-bypass-approvals-and-sandbox \
   "create and verify the mike e2e file" >"$WORK/run.log" 2>&1 || {

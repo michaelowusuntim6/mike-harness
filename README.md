@@ -3,9 +3,14 @@
 `mike` is a standalone terminal coding agent built on the Rust Codex CLI core,
 rebranded and rewired to run entirely against a **local DeepSeek bridge**. It
 does not use an OpenAI account, OpenAI telemetry, ChatGPT login, or a paid API
-key. The model is **DeepSeek V4.1 Flash**, served by the Python bridge in
-[`~/Deepseek-API`](../Deepseek-API), which drives the free DeepSeek web session
-through your own browser login.
+key. The model is **DeepSeek V4.1 Flash**, served by the bundled Python bridge
+in [`backend/`](backend/), which drives the free DeepSeek web session through
+your own browser login.
+
+The Rust binary owns the bridge lifecycle: if nothing is listening on port 8000
+it starts `backend/app.py`, waits for it to become healthy, and terminates it
+when `mike` exits. If a bridge is already running, `mike` attaches to it and
+leaves it untouched. No shell wrapper or external Python checkout is required.
 
 This repository is a fork of [openai/codex](https://github.com/openai/codex)
 (the Rust workspace is under `codex-rs/`). The upstream OpenAI provider code
@@ -44,15 +49,16 @@ inert in the Mike CLI.
 
 ```
 ┌───────────────────────────┐     Responses API (SSE)     ┌──────────────────────────┐
-│  mike (Rust Codex core)   │ ──────────────────────────> │ Python bridge            │
+│  mike (Rust Codex core)   │ ──────────────────────────> │ backend/app.py            │
 │  TUI · tools · sandbox    │ <────────────────────────── │ 127.0.0.1:8000/v1        │
-└───────────────────────────┘   text + function calls    │ prompted-tool adapter    │
-                                                          └────────────┬─────────────┘
-                                                                       │ single prompt
-                                                          ┌────────────▼─────────────┐
-                                                          │ DeepSeek web client       │
-                                                          │ (your signed-in browser)  │
-                                                          └──────────────────────────┘
+│  spawns + reaps backend   │   text + function calls    │ prompted-tool adapter    │
+└─────────────┬─────────────┘                            └────────────┬─────────────┘
+              │ process lifecycle                                    │ single prompt
+              ▼                                                      ▼
+┌───────────────────────────┐                            ┌──────────────────────────┐
+│ backend/venv/bin/python   │                            │ DeepSeek web client       │
+│ (child, killed on exit)   │                            │ (your signed-in browser)  │
+└───────────────────────────┘                            └──────────────────────────┘
 ```
 
 The bridge is stateless from Codex's perspective: each Responses request carries
@@ -65,31 +71,38 @@ permissions, and sandboxing stay inside Codex.
 ## Requirements
 
 - Linux/macOS with Rust 1.99.1 (`rustup` recommended)
-- Python 3.10+ and the dependencies in `~/Deepseek-API/requirements.txt`
+- Python 3.10+; dependencies are pinned in `backend/requirements.txt` and
+  installed into the bundled `backend/venv`
 - A one-time DeepSeek web login for the bridge:
   ```bash
-  cd ~/Deepseek-API
+  cd backend
   source venv/bin/activate
   python -m deepseek.auth
   ```
   The bridge reuses that session and refreshes it headlessly.
 
-## Build
+## Build and install
+
+```bash
+~/mike-harness/scripts/install_mike.sh
+```
+
+The installer builds the release binary, copies it to `~/.local/bin/mike`, and
+copies the bridge (including its venv and session) to
+`~/.local/lib/mike/backend/`. The binary locates the backend next to itself, so
+the installation is self-contained and works from any directory.
+
+Manual equivalent:
 
 ```bash
 cd ~/mike-harness/codex-rs
 cargo build --release -p codex-cli --bin codex
-```
-
-The binary is `codex-rs/target/release/codex`. Install the global launcher:
-
-```bash
-mkdir -p ~/.mike/bin ~/.local/bin
-cp codex-rs/target/release/codex ~/.mike/bin/mike-core
-cp ~/mike-harness/mike-wrapper.sh ~/.local/bin/mike
-cp ~/mike-harness/mike-config.toml ~/.mike/config.toml
-cp ~/mike-harness/mike-models.json ~/.mike/mike-models.json
-chmod +x ~/.local/bin/mike
+install -d ~/.local/bin ~/.local/lib/mike
+install -m 0755 -s target/release/codex ~/.local/bin/mike
+rsync -a ~/mike-harness/backend/ ~/.local/lib/mike/backend/
+mkdir -p ~/.mike
+cp -n ~/mike-harness/mike-config.toml ~/.mike/config.toml
+cp -n ~/mike-harness/mike-models.json ~/.mike/mike-models.json
 ```
 
 `~/.local/bin` must be on `PATH`.
@@ -104,21 +117,17 @@ mike resume
 mike --help
 ```
 
-The launcher:
+On startup, `mike` checks whether `127.0.0.1:8000` is already serving:
 
-1. points `CODEX_HOME` at `~/.mike` (isolated config/state);
-2. checks `http://127.0.0.1:8000/v1/models`;
-3. starts `~/Deepseek-API/app.py` with its venv if the bridge is not up;
-4. executes the Mike binary.
+- **Port closed** — it spawns `backend/app.py` with `backend/venv/bin/python`,
+  polls `/v1/models` until healthy, and kills the child when the CLI exits.
+- **Port open** — it attaches to the existing bridge and leaves it running.
 
-The bridge keeps running between invocations. Stop it with:
-
-```bash
-kill "$(cat ~/.mike/bridge.pid)"
-```
+Runtime config and state live in `~/.mike` (the default `CODEX_HOME`). Backend
+logs go to `~/.mike/logs/backend.log`.
 
 Set `MIKE_NO_BRIDGE=1` to skip auto-start (useful for tests or an external
-bridge). `MIKE_BRIDGE_DIR`, `MIKE_BRIDGE_HOST`, `MIKE_BRIDGE_PORT`, and
+bridge). `MIKE_BACKEND_DIR`, `MIKE_BRIDGE_HOST`, `MIKE_BRIDGE_PORT`, and
 `MIKE_BASE_URL` override paths/addresses.
 
 ## Configuration
@@ -140,7 +149,8 @@ Useful overrides:
 | --- | --- |
 | `MIKE_BASE_URL` | Point the Rust client at another Responses endpoint. |
 | `MIKE_BRIDGE_THINKING=1` | Enable DeepSeek DeepThink reasoning. The bridge emits reasoning items and replays them on later turns. |
-| `MIKE_BRIDGE_DIR` | Alternative `Deepseek-API` checkout. |
+| `MIKE_BACKEND_DIR` | Directory containing `app.py` when the backend is not beside the binary. |
+| `MIKE_BRIDGE_HOST` / `MIKE_BRIDGE_PORT` | Address the CLI checks and the spawned bridge binds (default `127.0.0.1:8000`). |
 | `MIKE_NO_BRIDGE=1` | Do not auto-start the Python bridge. |
 
 The bridge exposes:
@@ -173,7 +183,7 @@ cargo test -p codex-model-provider-info -p codex-model-provider \
   -p codex-models-manager -p codex-core --lib -- --test-threads=4
 
 # Bridge parser/protocol tests
-cd ~/Deepseek-API
+cd ~/mike-harness/backend
 venv/bin/python -m pytest tests/test_responses_bridge.py -q
 
 # End-to-end with a mocked model (no DeepSeek login needed)
@@ -183,12 +193,13 @@ venv/bin/python -m pytest tests/test_responses_bridge.py -q
 ## Layout
 
 - `codex-rs/` — Rust Codex workspace (TUI, core, providers, tools)
+- `codex-rs/cli/src/backend.rs` — bridge discovery, spawn, health check, teardown
+- `backend/` — bundled DeepSeek bridge (`app.py`, `server/`, `deepseek/`, venv,
+  session, tests)
 - `mike-config.toml` — installed to `~/.mike/config.toml`
 - `mike-models.json` — DeepSeek-only model catalog
-- `mike-wrapper.sh` — global launcher installed as `~/.local/bin/mike`
+- `scripts/install_mike.sh` — builds and installs the standalone app
 - `scripts/` — mock bridge and smoke-test helpers
-- `../Deepseek-API/server/responses.py` — Responses API adapter
-- `../Deepseek-API/server/toolcall.py` — prompted/DSML parsers
 
 Upstream documentation and history remain available in the original repository:
 <https://github.com/openai/codex>.

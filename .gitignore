@@ -94,3 +94,13 @@ CHANGELOG.ignore.md
 # Python bytecode files
 __pycache__/
 *.pyc
+
+# Bundled DeepSeek backend runtime data (never commit environments or secrets)
+backend/venv/
+backend/session/
+backend/sessions/
+backend/.mike/
+backend/.mike_history
+backend/.mike_state.json
+backend/.pytest_cache/
+backend/*.log

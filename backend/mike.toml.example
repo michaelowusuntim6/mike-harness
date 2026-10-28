@@ -1,0 +1,22 @@
+# mike.toml — all keys optional; omit any to inherit the default.
+#
+# Copy this file to one of:
+#   ./mike.toml                     (repo-local)
+#   ~/.config/mike/config.toml      (user-wide)
+#
+# Precedence (later wins):
+#   defaults  <  user config  <  repo config  <  MIKE_* env vars  <  CLI flags
+
+max_context        = 500000   # total tokens before compaction becomes possible
+compact_threshold  = 0.80     # fraction of max_context that triggers compaction
+keep_recent_turns  = 6        # turns preserved verbatim across a compaction
+server_host        = "127.0.0.1"
+server_port        = 8000
+server_cmd         = ""       # empty => auto-detect (python app.py)
+model              = "DeepSeek V4.1 Flash"
+model_id           = "deepseek-v4.1-flash"
+thinking_default   = "off"    # off | on | spinner | last
+tool_call_mode     = "auto"   # auto | native | prompted
+session_dir        = ""       # empty => <repo>/sessions/
+export_dir         = ""       # empty => <repo>/exports/
+log_level          = "info"   # debug | info | warn | error
