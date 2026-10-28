@@ -27,6 +27,8 @@ from starlette.concurrency import run_in_threadpool
 
 from deepseek.auth import LoginRequired
 
+from .openai_format import MOCK_TITLE_JSON, is_title_request
+
 from .toolcall import (
     StreamParser,
     extract_thinking,
@@ -508,7 +510,49 @@ def _normalize_calls(
 def _request_thinking(body: dict) -> bool:
     if "thinking" in body:
         return bool(body.get("thinking"))
+    # The client's reasoning level doubles as the DeepThink toggle: any level
+    # above `none` turns reasoning on.
+    reasoning = body.get("reasoning")
+    if isinstance(reasoning, dict):
+        effort = reasoning.get("effort")
+        if isinstance(effort, str) and effort.strip():
+            return effort.strip().lower() not in ("none", "minimal", "")
     return _env_bool("MIKE_BRIDGE_THINKING", False)
+
+
+def _is_title_generation(body: dict) -> bool:
+    texts: list[str] = []
+    instructions = body.get("instructions")
+    if isinstance(instructions, str):
+        texts.append(instructions)
+    for item in _input_items(body):
+        if isinstance(item, dict):
+            texts.append(_text_of_content(item.get("content")))
+    return is_title_request(texts)
+
+
+def _mocked_title_events(response_id: str, prompt: str) -> Iterable[str]:
+    """Answer Codex's title request locally so the upstream chat stays clean."""
+    item_id = _new_id("msg")
+    log.info("responses: answering title request locally")
+    yield _sse({"type": "response.created", "response": {"id": response_id}})
+    yield _begin_message(item_id)
+    yield _sse(
+        {
+            "type": "response.output_text.delta",
+            "item_id": item_id,
+            "delta": MOCK_TITLE_JSON,
+            "content_index": 0,
+        }
+    )
+    yield _sse(
+        {
+            "type": "response.output_item.done",
+            "item": _message_item(item_id, MOCK_TITLE_JSON),
+        }
+    )
+    yield _emit_completed(response_id, prompt, MOCK_TITLE_JSON, "")
+
 
 
 def _emit_reasoning(reasoning: str) -> Iterable[str]:
@@ -619,9 +663,11 @@ def _emit_completed(
                 "conversation_id": conversation_id,
                 "usage": {
                     "input_tokens": input_tokens,
-                    "input_tokens_details": None,
+                    "input_tokens_details": {"cached_tokens": 0},
                     "output_tokens": output_tokens,
-                    "output_tokens_details": None,
+                    "output_tokens_details": {
+                        "reasoning_tokens": _est_tokens(reasoning) if reasoning else 0
+                    },
                     "total_tokens": input_tokens + output_tokens,
                 },
             },
@@ -664,6 +710,8 @@ def _response_events(client, body: dict) -> Iterable[str]:
     else:
         log.info("responses: starting a fresh upstream thread")
     thinking = _request_thinking(body)
+    if thinking:
+        log.info("responses: DeepThink enabled for this turn")
     live = last_action != "tool_output"
     after_tool = last_action == "tool_output"
     empty_attempts = 0
@@ -821,7 +869,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
                 yield from _emit_reasoning(reasoning)
             yield from _emit_text(final_text, streamed_text, message_item_id, message_added)
             yield _emit_completed(
-                response_id, current_prompt, raw, reasoning, upstream_cid
+                response_id, full_prompt, raw, reasoning, upstream_cid
             )
             return
 
@@ -832,7 +880,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
             for call in tool_calls:
                 yield _emit_tool_call(call)
             yield _emit_completed(
-                response_id, current_prompt, raw, reasoning, upstream_cid
+                response_id, full_prompt, raw, reasoning, upstream_cid
             )
             return
 
@@ -852,7 +900,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
             yield from _emit_reasoning(reasoning)
         yield from _emit_text(clean, streamed_text, message_item_id, message_added)
         yield _emit_completed(
-            response_id, current_prompt, raw, reasoning, upstream_cid
+            response_id, full_prompt, raw, reasoning, upstream_cid
         )
         return
 
@@ -879,6 +927,18 @@ def build_responses_endpoint(app: FastAPI, get_client) -> None:
             return JSONResponse(
                 status_code=400,
                 content={"error": {"message": "`input` must not be empty", "type": "invalid_request"}},
+            )
+
+        if _is_title_generation(body):
+            # Codex titles are generated on a hidden thread; answering locally
+            # keeps the upstream DeepSeek chat free of orphan sessions.
+            return StreamingResponse(
+                _mocked_title_events(_new_id("resp"), body.get("instructions") or ""),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
             )
 
         try:

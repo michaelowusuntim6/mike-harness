@@ -11,12 +11,15 @@ approval_policy = "never"
 sandbox_mode = "workspace-write"
 web_search = "disabled"
 check_for_update_on_startup = false
+# DeepThink is on/off: "none" disables it, any other level enables it.
+model_reasoning_effort = "none"
 
 [sandbox_workspace_write]
 network_access = true
 
 [tui]
 animations = false
+status_line = ["model", "context-tokens", "current-dir", "thread-name"]
 
 [tui.effects]
 welcome = false

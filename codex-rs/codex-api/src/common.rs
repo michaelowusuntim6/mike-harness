@@ -307,6 +307,9 @@ pub struct ResponsesApiRequest {
     /// Non-standard extension used by local bridges to resume an upstream thread.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// Non-standard extension used by the local bridge to toggle DeepThink.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
 }
 
 impl<'a> From<&'a ResponsesApiRequest> for ResponseCreateWsRequest<'a> {

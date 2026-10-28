@@ -41,6 +41,37 @@ impl ReasoningShortcutDirection {
 }
 
 impl ChatWidget {
+    /// Toggle DeepThink (the bridge's `thinking` flag) between off and on.
+    ///
+    /// The web chat has a single reasoning switch, so the catalog advertises
+    /// exactly two levels: `none` (off) and `low` (on).
+    pub(super) fn toggle_deep_think(&mut self) {
+        if self.blocks_direct_input {
+            self.add_error_message(PARENT_OWNED_INPUT_MESSAGE.to_string());
+            return;
+        }
+        if !self.is_session_configured() {
+            self.add_info_message(
+                "DeepThink is disabled until startup completes.".to_string(),
+                /*hint*/ None,
+            );
+            return;
+        }
+        let reasoning_on = self
+            .effective_reasoning_effort()
+            .is_some_and(|effort| effort != ReasoningEffortConfig::None);
+        let next = if reasoning_on {
+            None
+        } else {
+            Some(ReasoningEffortConfig::Low)
+        };
+        self.app_event_tx.send(AppEvent::UpdateReasoningEffort(next));
+        self.add_info_message(
+            format!("DeepThink {}.", if reasoning_on { "off" } else { "on" }),
+            /*hint*/ None,
+        );
+    }
+
     /// Handles main-surface reasoning shortcuts before general key dispatch.
     ///
     /// Returning `true` means the key was recognized as a reasoning shortcut and

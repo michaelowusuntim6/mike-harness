@@ -16,6 +16,29 @@ from .schemas import ChatMessage
 
 _ROLE_LABELS = {"system": "System", "user": "User", "assistant": "Assistant"}
 
+# Codex asks the model for a background task title on its own hidden thread.
+# Answering that locally keeps the request out of the upstream chat entirely.
+TITLE_PROMPT_MARKER = "Generate a concise, single-line task title"
+MOCK_TITLE = "New Coding Session"
+MOCK_TITLE_JSON = json.dumps({"title": MOCK_TITLE})
+
+
+def is_title_request(texts: Iterable[str]) -> bool:
+    """Whether any prompt text is Codex's title-generation request."""
+    return any(t and TITLE_PROMPT_MARKER in t for t in texts)
+
+
+class MockStream:
+    """Stands in for a DeepSeek stream when the reply is generated locally."""
+
+    conversation_id = None
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def iter_events(self):
+        yield "content", self._text
+
 
 def _text_of(content) -> str:
     """Extract plain text from a message's content (string or list-of-parts)."""

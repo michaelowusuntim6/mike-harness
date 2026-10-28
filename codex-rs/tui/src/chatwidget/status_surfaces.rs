@@ -21,6 +21,7 @@ use codex_config::os_host_name;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::num_format::format_with_separators;
 use codex_utils_sandbox_summary::summarize_permission_profile;
 
 use super::status_state::TerminalTitleStatusKind;
@@ -794,6 +795,24 @@ impl ChatWidget {
             StatusLineItem::ContextWindowSize => self
                 .status_line_context_window_size()
                 .map(|cws| format!("{} window", format_tokens_compact(cws))),
+            StatusLineItem::ContextTokens => {
+                if self.token_usage_pending {
+                    return None;
+                }
+                let context_window = self.status_line_context_window_size()?;
+                let default_usage = TokenUsage::default();
+                let used = self
+                    .token_info
+                    .as_ref()
+                    .map(|info| &info.last_token_usage)
+                    .unwrap_or(&default_usage)
+                    .tokens_in_context_window();
+                Some(format!(
+                    "Ctx: {} / {}",
+                    format_with_separators(used),
+                    format_with_separators(context_window)
+                ))
+            }
             StatusLineItem::TotalInputTokens => (!self.token_usage_pending).then(|| {
                 format!(
                     "{} in",
@@ -874,6 +893,7 @@ impl ChatWidget {
             StatusSurfacePreviewItem::WeeklyLimit => StatusLineItem::WeeklyLimit,
             StatusSurfacePreviewItem::CodexVersion => StatusLineItem::CodexVersion,
             StatusSurfacePreviewItem::ContextWindowSize => StatusLineItem::ContextWindowSize,
+            StatusSurfacePreviewItem::ContextTokens => StatusLineItem::ContextTokens,
             StatusSurfacePreviewItem::UsedTokens => StatusLineItem::UsedTokens,
             StatusSurfacePreviewItem::TotalInputTokens => StatusLineItem::TotalInputTokens,
             StatusSurfacePreviewItem::TotalOutputTokens => StatusLineItem::TotalOutputTokens,

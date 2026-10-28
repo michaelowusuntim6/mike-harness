@@ -206,6 +206,13 @@ def test_conversation_id_is_returned_and_resumed_with_only_new_turns():
     completed = [event for event in events if event["type"] == "response.completed"]
     assert completed[0]["response"]["conversation_id"] == "conv-2"
 
+    # Usage must describe the whole transcript, not just the continuation slice,
+    # so the TUI's context counter reflects what is actually in the window.
+    usage = completed[0]["response"]["usage"]
+    full_prompt = _build_prompt(body, _prepare_tools(body["tools"])[0])[0]
+    assert usage["input_tokens"] == responses._est_tokens(full_prompt)
+    assert usage["input_tokens"] > len(client.prompts[1]) // 4
+
     assert client.conversation_ids == [None, "conv-1"]
     resumed_prompt = client.prompts[1]
     assert resumed_prompt == "User: What is my favorite color?\n\nAssistant:"
@@ -285,3 +292,43 @@ def test_parser_handles_truncated_dsml_and_json_envelope():
     )
     calls, _ = parse_tool_calls(truncated)
     assert calls and calls[0]["name"] == "exec_command"
+
+
+def test_title_request_is_answered_without_calling_deepseek():
+    body = base_body(
+        text=(
+            "Generate a concise, single-line task title of at most 36 characters "
+            "and under five words where possible.\n\nUser prompt:\nFix the login bug"
+        )
+    )
+    client = FakeClient([["Should not be used."]])
+    assert responses._is_title_generation(body)
+    text = events_of(
+        responses._mocked_title_events("resp_1", body["input"][-1]["content"][0]["text"])
+    )
+    assert text[-1]["type"] == "response.completed"
+    delta = "".join(e.get("delta", "") for e in text)
+    assert json.loads(delta) == {"title": "New Coding Session"}
+    assert client.prompts == []
+
+
+def test_completed_usage_is_fully_populated():
+    client = FakeClient([("The answer is 42.",)])
+    events = events_of(_response_events(client, base_body()))
+    usage = events[-1]["response"]["usage"]
+    assert usage["input_tokens"] > 0
+    assert usage["output_tokens"] > 0
+    assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+    assert usage["input_tokens_details"] == {"cached_tokens": 0}
+    assert "reasoning_tokens" in usage["output_tokens_details"]
+
+
+def test_thinking_follows_reasoning_effort_when_flag_absent():
+    body = base_body()
+    assert responses._request_thinking(body) is False
+    body["reasoning"] = {"effort": "low"}
+    assert responses._request_thinking(body) is True
+    body["reasoning"] = {"effort": "none"}
+    assert responses._request_thinking(body) is False
+    body["thinking"] = True
+    assert responses._request_thinking(body) is True

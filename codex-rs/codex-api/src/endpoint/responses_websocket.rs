@@ -1086,6 +1086,7 @@ mod tests {
                 codex_protocol::turn_input::CyberAccessProgram::DaybreakBlue.into(),
             ),
             conversation_id: None,
+            thinking: None,
             client_metadata: Some(HashMap::from([(
                 "traceparent".to_string(),
                 "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_string(),

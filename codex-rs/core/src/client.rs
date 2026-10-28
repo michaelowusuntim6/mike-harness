@@ -154,6 +154,7 @@ use codex_model_provider::ResponsesConnectionKey;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::WorkspaceRoutingContext;
 use codex_model_provider::create_model_provider;
+use codex_model_provider_info::DEEPSEEK_PROVIDER_NAME;
 #[cfg(test)]
 use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
@@ -442,6 +443,7 @@ fn responses_request_properties_mismatch(
         client_metadata: _,
         access_programs: _,
         conversation_id: _,
+        thinking: _,
     } = previous;
     let ResponsesApiRequest {
         model: current_model,
@@ -460,6 +462,7 @@ fn responses_request_properties_mismatch(
         client_metadata: _,
         access_programs: _,
         conversation_id: _,
+        thinking: _,
     } = current;
 
     // Stream options control delivery for this response, not the context
@@ -1166,6 +1169,14 @@ impl ModelClient {
             }
         }
         let client_metadata = responses_metadata.client_metadata(include_internal);
+        // DeepSeek's web chat has one reasoning switch: send it explicitly so the
+        // bridge can honor the TUI's on/off toggle.
+        let thinking = reasoning
+            .effort
+            .as_ref()
+            .is_some_and(|effort| effort.as_str() != "none");
+        let thinking = (self.state.provider.info().name == DEEPSEEK_PROVIDER_NAME)
+            .then_some(thinking);
         let request = ResponsesApiRequest {
             model: model_info.slug.clone(),
             input,
@@ -1183,6 +1194,7 @@ impl ModelClient {
             client_metadata: Some(client_metadata),
             access_programs: None,
             conversation_id: None,
+            thinking,
         };
         Ok(request)
     }

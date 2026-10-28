@@ -48,8 +48,12 @@ from .config import (
     resolve_model_type,
 )
 from .openai_format import (
+    MOCK_TITLE_JSON,
+    MockStream,
+    _text_of,
     completion_response,
     error_frame,
+    is_title_request,
     messages_to_prompt,
     stream_chunks,
 )
@@ -147,6 +151,16 @@ async def chat_completions(req: ChatCompletionRequest):
     # (the OpenAI SDK always sends one) and let the existing thread's model stand.
     model_type = None if req.conversation_id else resolve_model_type(canonical_id)
     prompt = messages_to_prompt(req.messages)
+
+    if is_title_request(_text_of(m.content) for m in req.messages):
+        # Codex's background title request never reaches the upstream chat.
+        logger.info("chat completions: answering title request locally")
+        if req.stream:
+            return StreamingResponse(
+                stream_chunks(canonical_id, MockStream(MOCK_TITLE_JSON)),
+                media_type="text/event-stream",
+            )
+        return completion_response(canonical_id, MOCK_TITLE_JSON, prompt)
 
     try:
         # Off the event loop: get_client() uses Playwright's sync API, which
