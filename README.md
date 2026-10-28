@@ -70,6 +70,32 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - OpenAI login, ChatGPT account, Cloud, plugins, update checks, analytics, and
   feedback are hidden or disabled.
 
+## See it in Action
+
+Here is `mike` autonomously planning, applying patches, and fixing its own bugs
+in real-time — every step below is driven by tool calls the bridge parsed from
+the model's own output.
+
+![Bubble Sort Demo](docs/images/01-bubble-sort.png)
+
+*Asked for a Bubble Sort script, the agent explores the workspace, writes
+`bubble_sort.py` with `apply_patch`, and runs it to check the output.*
+
+![Bubble Sort Verified](docs/images/02-bubble-sort-verified.png)
+
+*It then validates the algorithm with 200 randomized checks against Python's
+`sorted()`, prints a run note, and summarizes the result.*
+
+![Bug Fix Plan](docs/images/03-bug-fix-plan.png)
+
+*Given a request to create a script with a deliberate division-by-zero bug, the
+agent writes the file, reads it back, and reproduces the crash.*
+
+![Bug Fix Result](docs/images/04-bug-fix-result.png)
+
+*After seeing the `ZeroDivisionError`, it diagnoses the faulty divisor formula,
+patches it with `apply_patch`, and re-runs the script to prove exit code 0.*
+
 ## Prerequisites
 
 - **Rust** (Cargo; Rust 1.99.1 or newer recommended, installed via `rustup`)
