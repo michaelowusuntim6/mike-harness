@@ -50,7 +50,14 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
   including truncated-call recovery, one completion nudge, and empty-stream
   retries.
 - Reasoning replay when DeepThink is enabled.
-- DeepSeek-only model catalog: the picker cannot select OpenAI models.
+- DeepThink on/off toggle: `/think` flips the bridge's `thinking` flag between
+  off and on, matching the DeepSeek web chat toggle.
+- Live context footer: the status line shows the model and current context
+  usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 475,000 · ~/dir · thread`.
+- Single-model catalog: only **DeepSeek V4.1 Flash** is listed. There is no
+  multi-model picker and no OpenAI model can be selected.
+- Task titles are answered locally by the bridge, so background naming never
+  opens an extra DeepSeek web chat.
 - OpenAI login, ChatGPT account, Cloud, plugins, update checks, analytics, and
   feedback are hidden or disabled.
 
@@ -145,12 +152,29 @@ Slash commands work natively inside the TUI, including:
 
 - `/help` — list available commands
 - `/compact` — compact the conversation context
-- `/model` — choose the model and reasoning effort
+- `/model` — show the single DeepSeek model and its DeepThink effort level
+- `/think` — toggle DeepThink reasoning on or off
+- `/statusline` — choose which items appear in the footer status line
 - `/status`, `/diff`, `/quit`
 
-DeepSeek DeepThink reasoning is enabled for the bridge by launching with
-`MIKE_BRIDGE_THINKING=1` (or by sending `thinking: true` in a Responses
-request).
+### Status line and DeepThink
+
+The footer status line defaults to `model`, `context-tokens`, `current-dir`,
+and `thread-name`, so it renders like:
+
+```text
+DeepSeek V4.1 Flash · Ctx: 2,966 / 475,000 · ~/mike-harness · New Coding Session
+```
+
+`Ctx` is the estimated tokens currently in the context window out of its
+capacity. Adjust the selection with `/statusline` or the `[tui] status_line`
+array in `~/.mike/config.toml`.
+
+DeepThink matches DeepSeek's web chat, which only offers off and on. `/think`
+switches between off (`model_reasoning_effort = "none"`) and on (`"low"`) and
+sends `thinking: true|false` with the next request. A new upstream chat starts
+only when the thread is new or after `/compact`; otherwise the existing
+DeepSeek conversation is resumed.
 
 When a bridge is already running (for example, one you started manually), `mike`
 attaches and does not stop it on exit.
@@ -171,6 +195,8 @@ Defaults:
 - provider: `deepseek` at `http://127.0.0.1:8000/v1`
 - bearer key: `sk-local` (the local bridge does not validate it)
 - model: `deepseek-v4.1-flash`
+- reasoning: `none` (DeepThink off); `/think` toggles it
+- status line: `["model", "context-tokens", "current-dir", "thread-name"]`
 - approval: `never`; sandbox: `workspace-write` with network access
 - analytics, feedback, update checks, web search: disabled
 - approval auto-review / Guardian prewarm: disabled
@@ -183,7 +209,7 @@ Environment overrides:
 | `MIKE_BACKEND_DIR` | Directory containing `app.py` when the bridge is not beside the binary |
 | `MIKE_BRIDGE_HOST` / `MIKE_BRIDGE_PORT` | Host and port used for the health check and spawned bridge |
 | `MIKE_NO_BRIDGE=1` | Do not start or check for the bridge |
-| `MIKE_BRIDGE_THINKING=1` | Enable DeepSeek DeepThink reasoning |
+| `MIKE_BRIDGE_THINKING=1` | Default DeepThink on when a request has no `thinking` flag |
 
 ## Troubleshooting
 
