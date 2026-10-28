@@ -1,205 +1,284 @@
-# mike — a local DeepSeek coding agent
+# Mike Harness — A fully self-contained, free Codex alternative powered by DeepSeek
 
-`mike` is a standalone terminal coding agent built on the Rust Codex CLI core,
-rebranded and rewired to run entirely against a **local DeepSeek bridge**. It
-does not use an OpenAI account, OpenAI telemetry, ChatGPT login, or a paid API
-key. The model is **DeepSeek V4.1 Flash**, served by the bundled Python bridge
-in [`backend/`](backend/), which drives the free DeepSeek web session through
-your own browser login.
+Mike Harness is a terminal coding agent built on the Rust Codex CLI core and
+rewired to run entirely against DeepSeek's free web chat. It has no OpenAI
+dependency: no account, no login, no telemetry, no paid API key. The model is
+**DeepSeek V4.1 Flash**, accessed through the user's own signed-in DeepSeek
+session.
 
-The Rust binary owns the bridge lifecycle: if nothing is listening on port 8000
-it starts `backend/app.py`, waits for it to become healthy, and terminates it
-when `mike` exits. If a bridge is already running, `mike` attaches to it and
-leaves it untouched. No shell wrapper or external Python checkout is required.
-
-This repository is a fork of [openai/codex](https://github.com/openai/codex)
-(the Rust workspace is under `codex-rs/`). The upstream OpenAI provider code
-still exists as an internal compatibility layer in some crates, but it is not
-the default, not required, and its account/cloud/update surfaces are hidden or
-inert in the Mike CLI.
+Unlike a thin wrapper around an external service, this repository is
+self-contained. The Rust binary ships with a bundled Python bridge
+(`backend/`), starts it automatically when needed, and shuts it down when the
+CLI exits. A single `mike` command is all that is required.
 
 > Unofficial project. Not affiliated with or endorsed by OpenAI or DeepSeek.
 > Use it responsibly and within DeepSeek's terms of service.
 
 ---
 
-## What works
-
-- Interactive TUI (`mike`) with streaming responses, session history, resume,
-  fork, archive, `/compact`, `/diff`, `/status`, approvals, and sandboxing.
-- Non-interactive mode: `mike exec "..."`, `mike review`, `mike resume`.
-- Agent tools exposed through the bridge:
-  - `exec_command` / `write_stdin` — shell commands and interactive sessions
-  - `apply_patch` — atomic, Codex-style multi-file patches
-  - `update_plan` — visible multi-step plans
-  - `task_complete` — explicit completion signal
-- Prompted tool calling for the DeepSeek web backend, including:
-  - strict `<tool_call>{JSON}</tool_call>` envelopes
-  - DeepSeek native **DSML** `invoke`/`parameter` fallback (V4 and V4.1 tags)
-  - multiple calls per turn, hidden tool syntax, and truncated-call recovery
-  - one completion nudge if the model stops after a tool call without finishing
-  - empty-stream retries and clear upstream error reporting
-  - reasoning replay: when thinking is enabled, prior reasoning is emitted as a
-    Responses reasoning item and folded back into subsequent prompts.
-- DeepSeek-only model catalog, so the model picker cannot select OpenAI models.
-- OpenAI login, ChatGPT account, Cloud, plugin marketplace, update checks,
-  analytics, and feedback uploads are disabled/hidden by default.
-
 ## Architecture
 
 ```
-┌───────────────────────────┐     Responses API (SSE)     ┌──────────────────────────┐
-│  mike (Rust Codex core)   │ ──────────────────────────> │ backend/app.py            │
-│  TUI · tools · sandbox    │ <────────────────────────── │ 127.0.0.1:8000/v1        │
-│  spawns + reaps backend   │   text + function calls    │ prompted-tool adapter    │
-└─────────────┬─────────────┘                            └────────────┬─────────────┘
-              │ process lifecycle                                    │ single prompt
-              ▼                                                      ▼
-┌───────────────────────────┐                            ┌──────────────────────────┐
-│ backend/venv/bin/python   │                            │ DeepSeek web client       │
-│ (child, killed on exit)   │                            │ (your signed-in browser)  │
-└───────────────────────────┘                            └──────────────────────────┘
+┌──────────────────────────────┐      Responses API (SSE)     ┌──────────────────────────┐
+│  mike (Rust Codex core)      │ ───────────────────────────> │ backend/app.py            │
+│  TUI · tools · sandbox       │ <─────────────────────────── │ 127.0.0.1:8000/v1         │
+│  starts and reaps the bridge │    text + tool calls         │ prompted-tool adapter     │
+└──────────────┬───────────────┘                              └────────────┬─────────────┘
+               │ process lifecycle                                      │ single prompt
+               ▼                                                        ▼
+┌──────────────────────────────┐                              ┌──────────────────────────┐
+│ backend/venv/bin/python      │                              │ DeepSeek web chat         │
+│ (child, terminated on exit)  │                              │ (your signed-in browser)  │
+└──────────────────────────────┘                              └──────────────────────────┘
 ```
 
-The bridge is stateless from Codex's perspective: each Responses request carries
-the full transcript, which the bridge flattens into a DeepSeek prompt. Tool
-definitions supplied by Codex are rendered into a strict prompted-call protocol.
-The model's tool calls are translated back into Responses `function_call` /
-`custom_tool_call` items and executed by the Rust agent — so patches, shell
-permissions, and sandboxing stay inside Codex.
+The Rust agent owns tools, permissions, sandboxing, sessions, and the TUI. The
+Python bridge translates each stateless Responses API request into a DeepSeek
+prompt, parses the model's JSON or DSML tool calls, and streams the result back.
+The bridge runs locally on `http://127.0.0.1:8000/v1`; the Rust CLI checks that
+port, spawns the Python process if it is closed, and terminates it on exit. If a
+bridge is already running, `mike` attaches to it and leaves it untouched.
 
-## Requirements
+## Features
 
-- Linux/macOS with Rust 1.99.1 (`rustup` recommended)
-- Python 3.10+; dependencies are pinned in `backend/requirements.txt` and
-  installed into the bundled `backend/venv`
-- A one-time DeepSeek web login for the bridge:
-  ```bash
-  cd backend
-  source venv/bin/activate
-  python -m deepseek.auth
-  ```
-  The bridge reuses that session and refreshes it headlessly.
+- Interactive TUI with streaming responses, session history, resume, fork,
+  archive, plans, diffs, and compaction.
+- Non-interactive mode: `mike exec`, `mike review`, `mike resume`.
+- Tools: `exec_command`, `write_stdin`, `apply_patch`, `update_plan`,
+  `task_complete`.
+- Prompted tool calling with JSON envelopes and DeepSeek DSML fallback,
+  including truncated-call recovery, one completion nudge, and empty-stream
+  retries.
+- Reasoning replay when DeepThink is enabled.
+- DeepSeek-only model catalog: the picker cannot select OpenAI models.
+- OpenAI login, ChatGPT account, Cloud, plugins, update checks, analytics, and
+  feedback are hidden or disabled.
 
-## Build and install
+## Prerequisites
+
+- **Rust** (Cargo; Rust 1.99.1 or newer recommended, installed via `rustup`)
+- **Python 3.10+** (only needed if you recreate the bundled virtualenv)
+- **Google Chrome** (used by the DeepSeek authentication flow)
+- Linux or macOS. Windows support is not covered by this setup.
+
+## Installation
+
+Clone the repository and run the installer:
 
 ```bash
-~/mike-harness/scripts/install_mike.sh
+git clone https://github.com/michaelowusuntim6/mike-harness.git
+cd mike-harness
+./scripts/install_mike.sh
 ```
 
-The installer builds the release binary, copies it to `~/.local/bin/mike`, and
-copies the bridge (including its venv and session) to
-`~/.local/lib/mike/backend/`. The binary locates the backend next to itself, so
-the installation is self-contained and works from any directory.
+The installer:
 
-Manual equivalent:
+1. builds the release binary;
+2. installs it as `~/.local/bin/mike`;
+3. copies the bundled bridge (including its venv and captured login session)
+   to `~/.local/lib/mike/backend/`;
+4. seeds `~/.mike/config.toml` and `~/.mike/mike-models.json` if they are
+   missing.
+
+Make sure `~/.local/bin` is on your `PATH`.
+
+### Manual build
 
 ```bash
 cd ~/mike-harness/codex-rs
-cargo build --release -p codex-cli --bin codex
-install -d ~/.local/bin ~/.local/lib/mike
+cargo build --release -p codex-cli
+install -d ~/.local/bin
 install -m 0755 -s target/release/codex ~/.local/bin/mike
-rsync -a ~/mike-harness/backend/ ~/.local/lib/mike/backend/
-mkdir -p ~/.mike
-cp -n ~/mike-harness/mike-config.toml ~/.mike/config.toml
-cp -n ~/mike-harness/mike-models.json ~/.mike/mike-models.json
 ```
 
-`~/.local/bin` must be on `PATH`.
-
-## Run
+This installs the binary only. For a truly standalone installation, also copy
+the bridge beside the install prefix:
 
 ```bash
-mike                    # start/attach the bridge, then launch the TUI
+mkdir -p ~/.local/lib/mike
+rsync -a ~/mike-harness/backend/ ~/.local/lib/mike/backend/
+```
+
+## First-time setup
+
+The bridge normally reuses the DeepSeek session captured during development.
+If the bundled session is missing or has expired, run the authentication flow
+once:
+
+```bash
+cd ~/.local/lib/mike/backend
+venv/bin/python -m deepseek.auth
+```
+
+This opens Chrome against DeepSeek so you can sign in. The resulting session is
+stored locally under `backend/session/` and refreshed headlessly on later runs.
+Session files contain credentials and must never be committed to Git.
+
+## Usage
+
+Run `mike` from any directory:
+
+```bash
+mike
+```
+
+On startup, `mike`:
+
+1. checks whether `127.0.0.1:8000` is already serving a bridge;
+2. starts the bundled backend if it is not;
+3. waits for the bridge to become healthy;
+4. launches the TUI;
+5. terminates the backend it started when the TUI exits.
+
+Useful entry points:
+
+```bash
+mike                          # interactive TUI
 mike exec "fix the failing test"
+mike exec --skip-git-repo-check "summarize this directory"
 mike review
 mike resume
 mike --help
 ```
 
-On startup, `mike` checks whether `127.0.0.1:8000` is already serving:
+Slash commands work natively inside the TUI, including:
 
-- **Port closed** — it spawns `backend/app.py` with `backend/venv/bin/python`,
-  polls `/v1/models` until healthy, and kills the child when the CLI exits.
-- **Port open** — it attaches to the existing bridge and leaves it running.
+- `/help` — list available commands
+- `/compact` — compact the conversation context
+- `/model` — choose the model and reasoning effort
+- `/status`, `/diff`, `/quit`
 
-Runtime config and state live in `~/.mike` (the default `CODEX_HOME`). Backend
-logs go to `~/.mike/logs/backend.log`.
+DeepSeek DeepThink reasoning is enabled for the bridge by launching with
+`MIKE_BRIDGE_THINKING=1` (or by sending `thinking: true` in a Responses
+request).
 
-Set `MIKE_NO_BRIDGE=1` to skip auto-start (useful for tests or an external
-bridge). `MIKE_BACKEND_DIR`, `MIKE_BRIDGE_HOST`, `MIKE_BRIDGE_PORT`, and
-`MIKE_BASE_URL` override paths/addresses.
+When a bridge is already running (for example, one you started manually), `mike`
+attaches and does not stop it on exit.
 
 ## Configuration
 
-Default config lives at `~/.mike/config.toml`:
+Runtime configuration and state live in `~/.mike`:
 
-- provider: `deepseek` → `http://127.0.0.1:8000/v1`
+| Path | Purpose |
+| --- | --- |
+| `~/.mike/config.toml` | Model, provider, approval, sandbox, and feature settings |
+| `~/.mike/mike-models.json` | DeepSeek-only model catalog |
+| `~/.mike/logs/backend.log` | Python bridge stdout/stderr |
+| `~/.mike/sessions/` | Agent session history |
+
+Defaults:
+
+- provider: `deepseek` at `http://127.0.0.1:8000/v1`
 - bearer key: `sk-local` (the local bridge does not validate it)
 - model: `deepseek-v4.1-flash`
-- approval policy: `never`; sandbox: `workspace-write` (network enabled)
+- approval: `never`; sandbox: `workspace-write` with network access
 - analytics, feedback, update checks, web search: disabled
-- approval auto-review / Guardian prewarm: disabled (no OpenAI reviewer model)
-- only the DeepSeek model is present in the picker
-- `~/.mike` projects are pre-trusted
+- approval auto-review / Guardian prewarm: disabled
 
-Useful overrides:
+Environment overrides:
 
 | Variable | Effect |
 | --- | --- |
-| `MIKE_BASE_URL` | Point the Rust client at another Responses endpoint. |
-| `MIKE_BRIDGE_THINKING=1` | Enable DeepSeek DeepThink reasoning. The bridge emits reasoning items and replays them on later turns. |
-| `MIKE_BACKEND_DIR` | Directory containing `app.py` when the backend is not beside the binary. |
-| `MIKE_BRIDGE_HOST` / `MIKE_BRIDGE_PORT` | Address the CLI checks and the spawned bridge binds (default `127.0.0.1:8000`). |
-| `MIKE_NO_BRIDGE=1` | Do not auto-start the Python bridge. |
+| `MIKE_BASE_URL` | Point the Rust client at another Responses-compatible endpoint |
+| `MIKE_BACKEND_DIR` | Directory containing `app.py` when the bridge is not beside the binary |
+| `MIKE_BRIDGE_HOST` / `MIKE_BRIDGE_PORT` | Host and port used for the health check and spawned bridge |
+| `MIKE_NO_BRIDGE=1` | Do not start or check for the bridge |
+| `MIKE_BRIDGE_THINKING=1` | Enable DeepSeek DeepThink reasoning |
 
-The bridge exposes:
+## Troubleshooting
 
-- `POST /v1/responses` — Codex's Responses API stream
-- `POST /v1/chat/completions` — the original OpenAI-compatible harness endpoint
-- `GET /v1/models`, `GET /healthz`
+**The TUI starts but requests fail.** Check the bridge log:
 
-## Bridge behavior details
+```bash
+tail -n 100 ~/.mike/logs/backend.log
+```
 
-- **Tool protocol:** Codex tools are rendered into a compact prompt; the model
-  is taught the exact JSON envelope plus freeform `input` handling for
-  `apply_patch`. Both JSON envelopes and DSML are parsed.
-- **Nudging:** if a text-only reply arrives after a tool result, the bridge makes
-  one internal follow-up request with a completion nudge. A second text-only
-  reply is accepted so the loop cannot spin.
-- **Completion:** `task_complete` is a bridge-only tool. Its summary becomes the
-  final assistant message; other calls in the same turn are ignored.
-- **Empty streams:** up to three upstream attempts, then a clear failure event.
-- **Limits:** text-only model, no image input, no hosted web search, no OpenAI
-  cloud features. The unused V8/code-mode host packages were removed from the
-  workspace so the release build does not ship or build V8.
+**Port 8000 is already in use.** `mike` treats any listener on the port as an
+existing bridge and attaches to it. Stop the other process or set
+`MIKE_BRIDGE_PORT` and `MIKE_BASE_URL` together.
+
+**Authentication errors or HTTP 401/403.** Re-run the DeepSeek auth flow:
+
+```bash
+cd ~/.local/lib/mike/backend
+venv/bin/python -m deepseek.auth
+```
+
+**`mike`: command not found.** Ensure `~/.local/bin` is on `PATH` and that the
+binary is executable:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+chmod +x ~/.local/bin/mike
+```
+
+**The backend cannot be found.** Re-run `./scripts/install_mike.sh`, or point
+`MIKE_BACKEND_DIR` at a directory containing `app.py`.
+
+**A stuck backend process.** Because `mike` starts the bridge as a child, it is
+normally cleaned up automatically. If a previous run was killed abruptly:
+
+```bash
+pkill -f '[m]ike/backend/venv/bin/python app.py'
+```
+
+Disable automatic startup with `MIKE_NO_BRIDGE=1` when using an external bridge.
 
 ## Testing
 
 ```bash
-# Rust unit tests for the changed crates
+# Rust tests for the changed crates
 cd ~/mike-harness/codex-rs
+cargo test -p codex-utils-home-dir --lib
 cargo test -p codex-model-provider-info -p codex-model-provider \
-  -p codex-models-manager -p codex-core --lib -- --test-threads=4
+  -p codex-models-manager -p codex-core --lib
 
-# Bridge parser/protocol tests
+# Bundled bridge tests
 cd ~/mike-harness/backend
-venv/bin/python -m pytest tests/test_responses_bridge.py -q
+venv/bin/python -m pytest -q
 
-# End-to-end with a mocked model (no DeepSeek login needed)
-# See scripts/mock_bridge.py and scripts/e2e_smoke.sh in this repo.
+# End-to-end smoke test with a deterministic mock model
+cd ~/mike-harness
+scripts/e2e_smoke.sh ~/.local/bin/mike
 ```
 
-## Layout
+## Project layout
 
-- `codex-rs/` — Rust Codex workspace (TUI, core, providers, tools)
-- `codex-rs/cli/src/backend.rs` — bridge discovery, spawn, health check, teardown
-- `backend/` — bundled DeepSeek bridge (`app.py`, `server/`, `deepseek/`, venv,
-  session, tests)
-- `mike-config.toml` — installed to `~/.mike/config.toml`
-- `mike-models.json` — DeepSeek-only model catalog
-- `scripts/install_mike.sh` — builds and installs the standalone app
-- `scripts/` — mock bridge and smoke-test helpers
+```text
+mike-harness/
+├── backend/                    # Bundled Python bridge
+│   ├── app.py                  # FastAPI/uvicorn entry point
+│   ├── server/                 # Responses API adapter and parsers
+│   ├── deepseek/               # DeepSeek web client and auth
+│   ├── tests/                  # Bridge tests
+│   └── venv/                   # Local virtualenv (git-ignored)
+├── codex-rs/                   # Rust workspace
+│   └── cli/src/backend.rs      # Bridge discovery, spawn, health, teardown
+├── scripts/
+│   ├── install_mike.sh         # Build and install the standalone app
+│   └── e2e_smoke.sh            # Mock-model end-to-end test
+├── mike-config.toml            # Default runtime configuration
+├── mike-models.json            # DeepSeek-only model catalog
+└── README.md
+```
 
-Upstream documentation and history remain available in the original repository:
-<https://github.com/openai/codex>.
+Runtime data such as `backend/venv/`, `backend/session/`, `backend/sessions/`,
+`backend/.mike_state.json`, build output, and local logs are git-ignored.
+
+## Security and privacy
+
+- No OpenAI credentials or telemetry are used.
+- DeepSeek authentication happens in your own Chrome profile; the captured
+  token stays on your machine under `backend/session/`.
+- The bridge binds to `127.0.0.1` by default. Do not expose it to untrusted
+  networks.
+- Never commit `backend/session/`, `.env` files, or local state. The repository
+  ignores them, but review `git status` before pushing.
+
+## Credits and license
+
+Mike Harness is a fork of [openai/codex](https://github.com/openai/codex) and
+inherits its Rust workspace and terminal UI. The bundled DeepSeek bridge is
+derived from the DeepSeek-API harness. See `LICENSE` and
+`backend/LICENSE` for licensing terms. OpenAI, ChatGPT, Codex, and DeepSeek are
+trademarks of their respective owners.

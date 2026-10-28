@@ -103,4 +103,13 @@ backend/.mike/
 backend/.mike_history
 backend/.mike_state.json
 backend/.pytest_cache/
+backend/__pycache__/
+backend/**/*.pyc
 backend/*.log
+
+# Rust build artifacts
+target/
+
+# Local runtime state and logs
+.mike/
+*.log
