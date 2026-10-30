@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/popups_and_settings.rs
+assertion_line: 4408
 expression: "format!(\"Before account change:\\n{before}\\n\\nAfter account change:\\n{after}\")"
 ---
 Before account change:
@@ -14,6 +15,6 @@ Before account change:
   enter select · esc back
 
 After account change:
-› Ask Codex to do anything
+› Ask mike to do anything
 
-  GPT-5.6-Sol default · /tmp/project
+  GPT-5.6-Sol · /tmp/project

@@ -70,7 +70,7 @@ pub fn read_managed_residency_requirement() -> Option<ResidencyRequirement> {
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS: u64 = 300_000;
 const DEFAULT_STREAM_MAX_RETRIES: u64 = 5;
-const DEFAULT_REQUEST_MAX_RETRIES: u64 = 4;
+const DEFAULT_REQUEST_MAX_RETRIES: u64 = 5;
 const DEFAULT_AWS_CREDENTIAL_EXPORT_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_AWS_AUTH_REFRESH_TIMEOUT_MS: u64 = 300_000;
 pub const DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS: u64 = 15_000;
@@ -86,6 +86,7 @@ pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex"
 pub const DEEPSEEK_PROVIDER_ID: &str = "deepseek";
 pub const DEEPSEEK_PROVIDER_NAME: &str = "DeepSeek";
 pub const DEEPSEEK_BASE_URL: &str = "http://127.0.0.1:8000/v1";
+const DEEPSEEK_LOCAL_ORIGIN: &str = "http://127.0.0.1:8000";
 pub const DEEPSEEK_API_KEY: &str = "sk-local";
 pub const DEEPSEEK_DEFAULT_MODEL: &str = "deepseek-v4.1-flash";
 const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
@@ -486,9 +487,15 @@ other non-default provider fields are not supported"
             };
             headers.insert(RESIDENCY_HEADER_NAME, value);
         }
+        let base_delay = if self.is_mike_bridge() {
+            // Local bridge: 1s, 2s, 4s, 8s, 16s with jitter before giving up.
+            Duration::from_secs(1)
+        } else {
+            Duration::from_millis(200)
+        };
         let retry = ApiRetryConfig {
             max_attempts: self.request_max_retries(),
-            base_delay: Duration::from_millis(200),
+            base_delay,
             retry_429: false,
             retry_5xx: true,
             retry_transport: true,
@@ -631,8 +638,10 @@ other non-default provider fields are not supported"
             query_params: None,
             http_headers: None,
             env_http_headers: None,
-            request_max_retries: Some(2),
-            stream_max_retries: Some(2),
+            // Unstable connections have to survive the provider-retry budget
+            // on top of the transport retries (5 tries, exponential backoff).
+            request_max_retries: Some(DEFAULT_REQUEST_MAX_RETRIES),
+            stream_max_retries: Some(DEFAULT_STREAM_MAX_RETRIES),
             stream_idle_timeout_ms: Some(600_000),
             websocket_connect_timeout_ms: None,
             requires_openai_auth: false,
@@ -752,6 +761,16 @@ other non-default provider fields are not supported"
                         && !value.trim().is_empty()
                 })
             })
+    }
+
+    /// True for the built-in local Mike bridge provider (matched by endpoint,
+    /// so user-defined providers pointing at the bridge get the same tuning).
+    pub fn is_mike_bridge(&self) -> bool {
+        self.base_url.as_deref().is_some_and(|base_url| {
+            base_url
+                .trim_end_matches('/')
+                .starts_with(DEEPSEEK_LOCAL_ORIGIN)
+        })
     }
 
     pub fn is_amazon_bedrock(&self) -> bool {

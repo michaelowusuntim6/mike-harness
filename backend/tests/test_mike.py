@@ -218,19 +218,19 @@ class _MockCounter:
         return self.value
 
 
-def test_compactor_threshold_is_400k():
+def test_compactor_threshold_is_96k():
     comp = mike.Compactor(_MockCounter(0))
-    assert comp.max_context == 500_000
-    assert comp.trigger_tokens == 400_000
+    assert comp.max_context == 120_000
+    assert comp.trigger_tokens == 96_000
 
 
-def test_compactor_triggers_at_400k():
-    comp = mike.Compactor(_MockCounter(400_001))
+def test_compactor_triggers_at_96k():
+    comp = mike.Compactor(_MockCounter(96_001))
     assert comp.should_compact([{"role": "user", "content": "x"}]) is True
 
 
-def test_compactor_does_not_trigger_at_300k():
-    comp = mike.Compactor(_MockCounter(300_000))
+def test_compactor_does_not_trigger_below_96k():
+    comp = mike.Compactor(_MockCounter(95_999))
     assert comp.should_compact([{"role": "user", "content": "x"}]) is False
 
 
@@ -500,7 +500,7 @@ class TestConfig:
         self._clean_env(monkeypatch)
         cfg, src = mike.load_config({}, user_config=tmp_path / "u.toml",
                                     repo_config=tmp_path / "r.toml")
-        assert cfg["max_context"] == 500_000
+        assert cfg["max_context"] == 120_000
         assert cfg["compact_threshold"] == 0.80
         assert cfg["server_port"] == 8000
         assert cfg["model_id"] == "deepseek-v4.1-flash"
@@ -1799,7 +1799,7 @@ def test_status_bar_reports_context_plan_and_cwd(tmp_path):
     status = str(mike.render_status_bar(agent))
 
     assert "DeepSeek V4.1 Flash" in status
-    assert "Ctx " in status and "500,000" in status
+    assert "Ctx " in status and "120,000" in status
     assert "Plan 1/2" in status
     assert "cwd" not in status
 

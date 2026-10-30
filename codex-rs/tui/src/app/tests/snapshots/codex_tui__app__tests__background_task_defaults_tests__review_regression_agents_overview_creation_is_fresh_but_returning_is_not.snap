@@ -1,10 +1,11 @@
 ---
 source: tui/src/app/tests/background_task_defaults_tests.rs
+assertion_line: 192
 expression: "format!(\"created from the dashboard:\\n{}\\nreturned to the existing task:\\n{}\",\nbefore_footer(&created), before_footer(&returned))"
 ---
 created from the dashboard:
                             ⠈     ⢀     ⠁                 ⠂
-›⠁Ask Codex to do anything         ⠈      ⠁
+›⠁Ask mike to do anything          ⠈      ⠁
        ⢀            ⠠     ⠄         ⠠          ⢀    ⠠     ⡀
 returned to the existing task:
-› Ask Codex to do anything
+› Ask mike to do anything

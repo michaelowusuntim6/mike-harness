@@ -43,10 +43,10 @@
       "include_skills_usage_instructions": false,
       "include_plugin_usage_instructions": false,
       "include_apps_usage_instructions": false,
-      "context_window": 500000,
-      "max_context_window": 500000,
-      "auto_compact_token_limit": 400000,
-      "effective_context_window_percent": 95,
+      "context_window": 120000,
+      "max_context_window": 120000,
+      "auto_compact_token_limit": 96000,
+      "effective_context_window_percent": 100,
       "truncation_policy": {
         "mode": "bytes",
         "limit": 20000

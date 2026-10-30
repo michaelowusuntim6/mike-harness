@@ -66,7 +66,7 @@ impl StatusSurfacePreviewItem {
             StatusSurfacePreviewItem::WeeklyLimit => "secondary 0%",
             StatusSurfacePreviewItem::CodexVersion => "0.0.0",
             StatusSurfacePreviewItem::ContextWindowSize => "500k window",
-            StatusSurfacePreviewItem::ContextTokens => "Ctx: 1,240 / 500,000",
+            StatusSurfacePreviewItem::ContextTokens => "Ctx: 1,240 / 120,000",
             StatusSurfacePreviewItem::UsedTokens => "0 used",
             StatusSurfacePreviewItem::TotalInputTokens => "0 in",
             StatusSurfacePreviewItem::TotalOutputTokens => "0 out",

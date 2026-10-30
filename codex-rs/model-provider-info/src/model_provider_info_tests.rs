@@ -991,3 +991,24 @@ model_catalog_url = "https://gateway.example/codex/catalog?token=catalog-secret"
         "https://gateway.example/v1"
     );
 }
+
+#[test]
+fn deepseek_provider_uses_five_retries_with_one_second_base_delay() {
+    let provider = ModelProviderInfo::create_deepseek_provider();
+    assert!(provider.is_mike_bridge());
+    assert_eq!(provider.request_max_retries(), 5);
+    assert_eq!(provider.stream_max_retries(), 5);
+    let api_provider = provider.to_api_provider(/*auth_mode*/ None).unwrap();
+    assert_eq!(api_provider.retry.max_attempts, 5);
+    assert_eq!(api_provider.retry.base_delay, std::time::Duration::from_secs(1));
+    assert!(api_provider.retry.retry_5xx);
+    assert!(api_provider.retry.retry_transport);
+}
+
+#[test]
+fn remote_providers_keep_the_fast_retry_base_delay() {
+    let provider = ModelProviderInfo::create_openai_provider(/*base_url*/ None);
+    assert!(!provider.is_mike_bridge());
+    let api_provider = provider.to_api_provider(Some(AuthMode::ApiKey)).unwrap();
+    assert_eq!(api_provider.retry.base_delay, std::time::Duration::from_millis(200));
+}

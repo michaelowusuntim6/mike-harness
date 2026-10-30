@@ -1,10 +1,11 @@
 ---
 source: tui/src/onboarding/trust_directory.rs
+assertion_line: 480
 expression: "terminal.backend().to_string().replace('\\\\', \"/\")"
 ---
   Folder access
   workspace/…/repository              
-  Trust this folder? Codex can read,
+  Trust this folder? mike can read,
   edit, and run files here, subject to
   your permission settings. Folder
   settings can run code automatically,

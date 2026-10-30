@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 39
 expression: normalized_backend_snapshot(terminal.backend())
 ---
 "                                                            "
@@ -8,6 +9,6 @@ expression: normalized_backend_snapshot(terminal.backend())
 "                                                            "
 " voice ● listening                  f9 mute     /voice stop "
 "                                                            "
-"› Ask Codex to do anything                                  "
+"› Ask mike to do anything                                   "
 "                                                            "
-"  GPT-5.6-Sol default · /tmp/project                        "
+"  GPT-5.6-Sol · /tmp/project                                "

@@ -389,7 +389,7 @@ async fn startup_resume_rejects_guardian_thread() -> color_eyre::Result<()> {
         .expect_err("Guardian resume should be rejected");
     insta::assert_snapshot!(error.to_string(), @"
         Cannot resume a Guardian review thread.
-        Resume its parent session instead: codex resume 00000000-0000-0000-0000-000000000001
+        Resume its parent session instead: mike resume 00000000-0000-0000-0000-000000000001
         ");
     app_server.shutdown().await?;
     Ok(())

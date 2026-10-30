@@ -1,24 +1,25 @@
 ---
 source: tui/src/chatwidget/tests/status_and_layout.rs
+assertion_line: 5467
 expression: "format!(\"before reveal:\\n{hidden}\\nrunning:\\n{running}\\ncompleted:\\n{}\",\nhook_status_frame(&chat, 80),)"
 ---
 before reveal:
 "                                                                                "
 "                                                                                "
-"› Ask Codex to do anything                                                      "
+"› Ask mike to do anything                                                       "
 "                                                                                "
-"  GPT-5.6-Sol default · /tmp/project                                            "
+"  GPT-5.6-Sol · /tmp/project                                                    "
 running:
 "                                                                                "
 "• Saving session summary                                                        "
 "                                                                                "
 "                                                                                "
-"› Ask Codex to do anything                                                      "
+"› Ask mike to do anything                                                       "
 "                                                                                "
-"  GPT-5.6-Sol default · /tmp/project                                            "
+"  GPT-5.6-Sol · /tmp/project                                                    "
 completed:
 "                                                                                "
 "                                                                                "
-"› Ask Codex to do anything                                                      "
+"› Ask mike to do anything                                                       "
 "                                                                                "
-"  GPT-5.6-Sol default · /tmp/project                                            "
+"  GPT-5.6-Sol · /tmp/project                                                    "

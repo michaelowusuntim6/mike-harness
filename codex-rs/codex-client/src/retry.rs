@@ -40,6 +40,14 @@ impl RetryOn {
     }
 }
 
+/// Delay before the next attempt, doubling per attempt: 1s, 2s, 4s, 8s, 16s...
+pub fn exponential_backoff(attempt: u64) -> Duration {
+    let exp = 2u64.saturating_pow(attempt.saturating_sub(1).min(8) as u32);
+    let raw = Duration::from_secs(1).saturating_mul(exp as u32);
+    let jitter: f64 = rand::rng().random_range(0.9..1.1);
+    raw.mul_f64(jitter)
+}
+
 pub fn backoff(base: Duration, attempt: u64) -> Duration {
     if attempt == 0 {
         return base;
@@ -115,4 +123,25 @@ where
         }
     }
     Err(TransportError::RetryLimit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exponential_backoff_doubles_from_one_second() {
+        for (attempt, expected_secs) in [(1, 1.0), (2, 2.0), (3, 4.0), (4, 8.0), (5, 16.0)] {
+            let delay = exponential_backoff(attempt).as_secs_f64();
+            assert!(
+                (expected_secs * 0.9..=expected_secs * 1.1).contains(&delay),
+                "attempt {attempt}: {delay}"
+            );
+        }
+    }
+
+    #[test]
+    fn exponential_backoff_is_capped() {
+        assert!(exponential_backoff(64) <= Duration::from_secs(256 * 2));
+    }
 }

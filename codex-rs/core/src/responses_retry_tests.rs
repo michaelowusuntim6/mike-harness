@@ -2,6 +2,7 @@ use super::ResponsesStreamRequest;
 use super::ResponsesStreamRetryState;
 use super::handle_response_stream_error;
 use super::log_retry;
+use super::mike_bridge_reconnect_delay;
 use crate::realtime_history::RealtimeHistoryState;
 use crate::session::step_context::StepContext;
 use crate::session::tests::make_session_and_context;
@@ -97,4 +98,24 @@ async fn stream_retry_preserves_deadline_across_delayed_notification() {
         (advice.deadline()..=advice.deadline() + Duration::from_millis(1)).contains(&resumed_at),
         "retry resumed at {resumed_at:?}, expected {advice:?}"
     );
+}
+
+#[test]
+fn bridge_reconnect_budget_is_five_exponential_attempts() {
+    let mut retry_state = ResponsesStreamRetryState::default();
+    let mut delays = Vec::new();
+    for _ in 0..5 {
+        delays.push(mike_bridge_reconnect_delay(&mut retry_state).expect("within budget"));
+    }
+    assert_eq!(retry_state.retries, 5);
+    assert!(mike_bridge_reconnect_delay(&mut retry_state).is_none());
+    for (attempt, delay) in delays.iter().enumerate() {
+        let expected = 2f64.powi(attempt as i32);
+        let secs = delay.as_secs_f64();
+        assert!(
+            (expected * 0.9..=expected * 1.1).contains(&secs),
+            "attempt {}: {secs}",
+            attempt + 1
+        );
+    }
 }

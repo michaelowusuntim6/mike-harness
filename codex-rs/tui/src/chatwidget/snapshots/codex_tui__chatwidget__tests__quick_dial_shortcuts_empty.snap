@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests/quick_dials_tests.rs
+assertion_line: 147
 expression: "render_bottom_popup(&chat, 100)"
 ---
   Presets
@@ -9,4 +10,4 @@ expression: "render_bottom_popup(&chat, 100)"
   n · new   s · from settings   e · edit   d · delete   esc · close
 
 
-› Ask Codex to do anything
+› Ask mike to do anything

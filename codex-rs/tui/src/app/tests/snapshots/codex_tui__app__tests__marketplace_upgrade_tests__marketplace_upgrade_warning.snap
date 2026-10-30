@@ -1,5 +1,6 @@
 ---
 source: tui/src/app/tests/marketplace_upgrade_tests.rs
+assertion_line: 103
 expression: "normalize_snapshot_paths(format!(\"Warning notice:\\n{notice}\\n\\nFirst warning details:\\n{first_details}\\n\\nSecond warning details:\\n{second_details}\"))"
 ---
 Warning notice:
@@ -15,9 +16,9 @@ Warning notice:
 
 
 
-› Ask Codex to do anything
+› Ask mike to do anything
 
-  GPT-5.6-Sol default · /tmp/project
+  GPT-5.6-Sol · /tmp/project
   ? for shortcuts                                     ⚠ 2 warnings · f2 to view
 
 First warning details:

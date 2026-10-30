@@ -22,6 +22,10 @@ use tracing::warn;
 
 const INITIAL_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(60);
+/// The local Mike bridge is a loopback HTTP stream, so a dropped connection or
+/// reset never means "wait for Wi-Fi": reconnect on the exponential schedule.
+const MIKE_BRIDGE_STREAM_RETRIES: u64 = 5;
+const MIKE_BRIDGE_INITIAL_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ResponsesStreamRequest {
@@ -81,6 +85,26 @@ pub(crate) async fn handle_response_stream_error(
         )
         .await;
     }
+    if turn_context.provider.info().is_mike_bridge()
+        && matches!(
+            err.details(),
+            CodexErrorDetails::Stream(_) | CodexErrorDetails::ResponseStreamFailed(_)
+        )
+        && let Some(delay) = mike_bridge_reconnect_delay(retry_state)
+    {
+        sess.notify_stream_error(
+            turn_context,
+            format!(
+                "Reconnecting... {}/{}",
+                retry_state.retries, MIKE_BRIDGE_STREAM_RETRIES
+            ),
+            err,
+        )
+        .await;
+        tokio::time::sleep(delay).await;
+        return Ok(());
+    }
+
     let operation = match request {
         ResponsesStreamRequest::Sampling => RetryOperation::Sampling,
         ResponsesStreamRequest::RemoteCompactionV2 => RetryOperation::RemoteCompactionV2,
@@ -174,6 +198,20 @@ pub(crate) async fn handle_response_stream_error(
             retry_at: retry_after.map(RetryAfter::deadline),
         });
     Err(err)
+}
+
+/// Reconnect delay for bridge stream drops, or `None` once the budget is spent.
+fn mike_bridge_reconnect_delay(retry_state: &mut ResponsesStreamRetryState) -> Option<Duration> {
+    if retry_state.retries >= MIKE_BRIDGE_STREAM_RETRIES {
+        return None;
+    }
+    retry_state.retries = retry_state.retries.saturating_add(1);
+    codex_client::record_retry!(
+        retry_state.retries,
+        MIKE_BRIDGE_INITIAL_RETRY_DELAY,
+        RetryOperation::Sampling
+    );
+    Some(codex_client::exponential_backoff(retry_state.retries))
 }
 
 fn log_retry(

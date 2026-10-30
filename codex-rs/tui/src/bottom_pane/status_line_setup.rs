@@ -201,7 +201,7 @@ impl StatusLineItem {
                 "Total context window size in tokens (omitted when unknown)"
             }
             StatusLineItem::ContextTokens => {
-                "Tokens in the context window out of its size, e.g. Ctx: 1,240 / 500,000 (omitted when unknown)"
+                "Tokens in the context window out of its size, e.g. Ctx: 1,240 / 120,000 (omitted when unknown)"
             }
             StatusLineItem::UsedTokens => "Total tokens used in session (omitted when zero)",
             StatusLineItem::TotalInputTokens => "Total input tokens used in session",

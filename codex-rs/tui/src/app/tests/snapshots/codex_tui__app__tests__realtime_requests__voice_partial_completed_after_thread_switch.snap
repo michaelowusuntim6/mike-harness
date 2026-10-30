@@ -1,20 +1,21 @@
 ---
 source: tui/src/app/tests/realtime_requests.rs
+assertion_line: 481
 expression: "normalize_voice_snapshot_directory(&format!(\"Other task:\\n{other_ui}\\nRestored owner:\\n{}\\n{rendered}\",\nrender_bottom_popup(&app.chat_widget, 80)), &app.config.cwd,)"
 ---
 Other task:
-› Ask Codex to do anything
+› Ask mike to do anything
 
-  gpt-test default · /tmp/project
+  gpt-test · /tmp/project
 Restored owner:
  voice ● listening                                      f9 mute     /voice stop
    mic ▁▁▁▁▁▁  codex ▁▁▁▁▁▁
 
-› Ask Codex to do anything
+› Ask mike to do anything
 
-  gpt-test default · /tmp/project
+  gpt-test · /tmp/project
 
-  >_ OpenAI Codex (v0.0.0)
+  >_ mike — DeepSeek (v1.0.0)
      /tmp/project
 
   To get started, describe a task or try one of these commands:

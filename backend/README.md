@@ -250,8 +250,8 @@ already holds the rest).
 
 ### Changing the context budget
 
-The max context is **500,000 tokens** by default, and auto-compaction triggers at
-**80%** of it (i.e. **400,000 tokens**). Override the max with an environment
+The max context is **120,000 tokens** by default, and auto-compaction triggers at
+**80%** of it (i.e. **96,000 tokens**). Override the max with an environment
 variable or a config file — the threshold follows automatically:
 
 ```bash
