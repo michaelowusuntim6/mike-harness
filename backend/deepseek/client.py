@@ -66,6 +66,21 @@ def _decode_cid(conversation_id: Optional[str]) -> tuple[Optional[str], Optional
     return (session_id or None), parent
 
 
+def rewind_cid(conversation_id: Optional[str]) -> Optional[str]:
+    """Drop the message id from a conversation_id, keeping the chat session.
+
+    A cid with no `:<message_id>` part decodes to `(chat_session_id, None)`, so
+    the next completion re-roots the thread inside the SAME web chat instead of
+    opening a second one. That is the rewind context compaction needs: the
+    summarized turns must not stay on the live branch, but the user expects one
+    chat in the DeepSeek sidebar.
+    """
+    session_id, _ = _decode_cid(conversation_id)
+    if session_id is None:
+        return None
+    return _encode_cid(session_id, None)
+
+
 @dataclass
 class Reply:
     """A completed chat reply plus the id to resume the conversation."""

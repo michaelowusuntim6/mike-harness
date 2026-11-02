@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from deepseek.auth import LoginRequired
+from deepseek.client import _decode_cid, rewind_cid
 
 from .openai_format import MOCK_TITLE_JSON, is_title_request
 
@@ -104,6 +105,17 @@ COMPLETION_NUDGE = (
 MALFORMED_NUDGE = (
     "Your last message contained tool syntax but no executable tool call. "
     "Emit a single valid <tool_call> envelope or a DSML invoke block now."
+)
+
+# A turn that carries a context summary must rewind the upstream thread instead
+# of continuing it: the summarized turns are gone locally, so appending them to
+# the live branch would keep the model re-reading stale history. Both summary
+# producers in this repo are recognized — the Rust core's compaction template
+# (prompts/templates/compact/summary_prefix.md) and the standalone harness's
+# marker.
+COMPACTION_MARKERS = (
+    "Another language model started to solve this problem",
+    "The conversation was compacted",
 )
 
 # Codex sends its native-tool system prompt (base instructions, permissions,
@@ -509,6 +521,36 @@ def _is_assistant_output(item: Any) -> bool:
     )
 
 
+def _is_rewound_cid(conversation_id: str) -> bool:
+    """True for a conversation id that names a session but no message.
+
+    That is the rewind form the core sends immediately after compaction: the
+    session keeps existing, the tree position is dropped so the summary becomes
+    the new root.
+    """
+    session_id, parent = _decode_cid(conversation_id)
+    return session_id is not None and parent is None
+
+
+def _is_compaction_turn(body: dict) -> bool:
+    """True when the transcript carries a context-compaction summary.
+
+    Recognized by the typed items Codex sends or by the summary preamble opening
+    a user message. This is only a fallback for the mismatch branch below: the
+    summary stays in the transcript for the rest of the session, so it cannot say
+    *which* turn follows a compaction — the message-less conversation id is the
+    signal that can.
+    """
+    for item in _input_items(body):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "") in ("compaction", "context_compaction"):
+            return True
+        if _text_of_content(item.get("content")).startswith(COMPACTION_MARKERS):
+            return True
+    return False
+
+
 def _build_continuation_prompt(body: dict) -> tuple[str, str] | None:
     """Build the prompt for a resumed upstream thread.
 
@@ -777,11 +819,28 @@ def _response_events(client, body: dict) -> Iterable[str]:
     incoming_cid = raw_cid.strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
     upstream_cid = incoming_cid
     prompt = full_prompt
-    if incoming_cid:
+    if incoming_cid and _is_rewound_cid(incoming_cid):
+        # The core rewinds after compaction: same chat_session_id, no message
+        # part. The new root has no memory of the old branch, so the whole
+        # compacted transcript goes over instead of a continuation tail.
+        log.info(
+            "responses: rewinding upstream thread %s to the session root",
+            incoming_cid[:8],
+        )
+    elif incoming_cid:
         continuation = _build_continuation_prompt(body)
         if continuation is not None:
             prompt = continuation[0]
             log.info("responses: resuming upstream thread %s", incoming_cid[:8])
+        elif _is_compaction_turn(body):
+            # A summary that arrived still positioned in the tree: re-root it in
+            # the same chat rather than forking the conversation.
+            upstream_cid = rewind_cid(incoming_cid) or incoming_cid
+            log.warning(
+                "responses: compaction rewound upstream thread %s instead of "
+                "starting a fresh one",
+                upstream_cid[:8],
+            )
         else:
             log.warning(
                 "responses: conversation_id supplied without an assistant turn; "

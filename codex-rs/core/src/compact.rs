@@ -267,9 +267,10 @@ async fn run_compact_task_inner_impl(
     world_state: Arc<WorldState>,
     compaction_metadata: CompactionTurnMetadata,
 ) -> CodexResult<String> {
-    // Summarisation must not append to (or continue) the live upstream thread;
-    // the compacted transcript seeds a fresh one for the next turn.
-    sess.set_conversation_id(/*conversation_id*/ None).await;
+    // The summary request continues the live upstream thread rather than opening
+    // a second chat: the transcript is already server-side, and after the summary
+    // arrives the thread is rewound (history replacement keeps only the session
+    // part), so that branch is orphaned instead of growing a new conversation.
     let compaction_item = TurnItem::ContextCompaction(ContextCompactionItem::new());
     sess.emit_turn_item_started(&turn_context, &compaction_item)
         .await;
@@ -832,6 +833,9 @@ async fn drain_to_completed(
 ) -> CodexResult<CompactionResponse> {
     sess.set_server_reasoning_included(turn_context.model_info().use_responses_lite)
         .await;
+    // Ride the existing upstream thread so compaction does not create a second
+    // DeepSeek chat; the caller rewinds the token afterwards.
+    let conversation_id = sess.conversation_id().await;
     let mut stream = client_session
         .stream(
             prompt,
@@ -845,7 +849,7 @@ async fn drain_to_completed(
             turn_context.reasoning_summary(),
             turn_context.config.service_tier.clone(),
             responses_metadata,
-            /*conversation_id*/ None,
+            conversation_id.as_deref(),
             // Rollout tracing currently models remote compaction only; local compaction streams
             // are left untraced until the reducer has a first-class local compaction lifecycle.
             &InferenceTraceContext::disabled(),

@@ -68,6 +68,9 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - Live context footer: the status line shows the model and current context
   usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 400,000 · ~/dir · thread`.
   The 400,000-token window is compacted automatically at 80% (`320,000`).
+- Compaction rewinds rather than forking: `/compact` and auto-compaction keep the
+  same DeepSeek chat session and re-root the thread at the summary, so the web
+  sidebar does not grow a new conversation each time.
 - Exact token counting: DeepSeek's published HuggingFace tokenizer
   (`assets/tokenizer.json`) is embedded in both the bridge and the Rust core, so
   context math counts the text that is actually sent — including system
@@ -225,9 +228,11 @@ array in `~/.mike/config.toml`.
 
 DeepThink matches DeepSeek's web chat, which only offers off and on. `/think`
 switches between off (`model_reasoning_effort = "none"`) and on (`"low"`) and
-sends `thinking: true|false` with the next request. A new upstream chat starts
-only when the thread is new or after `/compact`; otherwise the existing
-DeepSeek conversation is resumed.
+sends `thinking: true|false` with the next request. A brand-new upstream chat
+starts only when the thread is new. After `/compact` the harness **rewinds**
+instead: it keeps the `chat_session_id`, drops the message id, and lets the
+summary re-root the thread inside the same DeepSeek conversation, so one session
+stays one chat in the sidebar.
 
 When a bridge is already running (for example, one you started manually), `mike`
 attaches and does not stop it on exit.

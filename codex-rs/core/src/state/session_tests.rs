@@ -273,3 +273,35 @@ async fn set_rate_limits_carries_account_metadata_from_codex_to_codex_other() {
         Some(false)
     );
 }
+
+#[tokio::test]
+async fn compaction_rewinds_conversation_id_while_reset_clears_it() {
+    let session_configuration = make_session_configuration_for_tests().await;
+    let mut state = SessionState::new(session_configuration);
+    let cid = "47e9f7ef-f94a-44e3-a0d6-47ee01c7d0e9:87".to_owned();
+
+    state.conversation_id = Some(cid.clone());
+    state.replace_annotated_history(
+        Vec::new(),
+        /*reference_context_item*/ None,
+        HistoryReplacement::Compaction {
+            reviewer_compaction_hash: None,
+        },
+    );
+    // Same chat session, message id dropped: the summary re-roots the existing
+    // DeepSeek conversation instead of creating a second one.
+    assert_eq!(
+        state.conversation_id.as_deref(),
+        Some("47e9f7ef-f94a-44e3-a0d6-47ee01c7d0e9")
+    );
+
+    state.conversation_id = Some(cid);
+    state.replace_history(Vec::new(), /*reference_context_item*/ None);
+    assert_eq!(state.conversation_id, None);
+}
+
+#[test]
+fn rewind_conversation_id_keeps_the_session_part() {
+    assert_eq!(rewind_conversation_id("47e9f7ef:87"), "47e9f7ef");
+    assert_eq!(rewind_conversation_id("47e9f7ef"), "47e9f7ef");
+}

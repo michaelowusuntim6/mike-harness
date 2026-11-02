@@ -212,3 +212,81 @@ quietly changing the user's context number. It includes the special-token cases
   400,000. Manual PTY smoke on the installed binary: footer read
   `Ctx: 2,511 / 400,000` for a prompt the heuristic had reported as 2,667 — the
   ~6% drop is the correction this change exists to make, not a regression.
+
+## v0.13 D1. Compaction rewinds the DeepSeek thread instead of forking a chat
+
+**Decision.** A compaction keeps the `chat_session_id` and drops only the
+`parent_message_id`, so the summary re-roots the *same* upstream conversation.
+The conversation id is an opaque `"<chat_session_id>:<message_id>"` token, and
+`_decode_cid` already maps a bare session id to `(session_id, None)`, so the
+rewind is expressible in the existing wire format: `deepseek/client.py` gains
+`rewind_cid()` to produce that form explicitly, `server/responses.py` detects the
+compaction turn and sends the whole compacted transcript on the bare session id,
+and the Rust side preserves the token — `compact.rs` no longer clears it before
+summarising, and `SessionState::replace_annotated_history` rewinds for
+`HistoryReplacement::Compaction` while `Reset` still starts a fresh thread.
+
+**Rationale.** Dropping the whole token made the bridge mint a new
+`chat_session_id` for the next request, so every compaction added a chat to the
+user's DeepSeek sidebar and abandoned the server-side thread. The web UI rewrites
+a prompt through `chat/edit_message`, which the bridge does not speak; the
+equivalent the `chat/completion` format affords is exactly this — same session,
+`parent_message_id: null` (traced in
+`/home/mike/Creator/rebuild/docs/DEEPSEEK_REWIND.md`).
+
+**Guard.** Detection looks only at the transcript tail after the last
+assistant-produced item. The summary stays in history for the rest of the
+session, so scanning the whole transcript would rewind every subsequent turn and
+orphan each fresh reply — there is a test for precisely that case.
+
+## v0.13 D2. Summarisation rides the existing thread
+
+**Decision.** The compaction request itself now passes the live conversation id
+(`drain_to_completed` used to hardcode `None`), so the model is asked to summarize
+on the thread that already holds the conversation, and the rewind afterwards
+orphans that branch.
+
+**Rationale.** Sending no id made the bridge open a *second* chat just to produce
+the summary — the duplicate the user sees in the sidebar. The thread already has
+the context, so no transcript needs re-sending for the summary, and the message is
+never stored locally.
+
+**Known gap.** The stream-error fallback still clears the id and reseeds a fresh
+thread when resuming fails; that path is error recovery, not compaction, and is
+unchanged.
+
+## v0.13 verification
+
+- `cd backend && venv/bin/python -m pytest tests/` → 154 passed. New rewind
+  tests cover: the message-less cid form, full-transcript re-send on rewind, the
+  summary-marker fallback when no continuation exists, typed `context_compaction`
+  items, and — the case that matters — an old summary still sitting in history
+  must **not** rewind a normal later turn.
+- Three pre-existing bridge tests used colon-less fake conversation ids
+  (`"conv-1"`, `"stale-thread"`). Those are structurally indistinguishable from
+  the rewind encoding, so the fixtures now use the real `<session>:<message>`
+  shape instead of the rule being weakened to accommodate them.
+- `cargo test -p codex-core --lib state::session` → 9 passed, including
+  `compaction_rewinds_conversation_id_while_reset_clears_it` and
+  `rewind_conversation_id_keeps_the_session_part`.
+- `cargo test -p codex-core --lib` (full) → 2840 passed, 15 failed; the 15 are
+  byte-for-byte the same set that fails on an unmodified HEAD worktree (missing
+  code-mode host binary, guardian and model-catalog drift that predates this
+  work). Zero regressions.
+- Live against the running bridge and real DeepSeek: four turns
+  (remember code → ordinary turn → rewound compaction turn → recall) produced
+  `responses: rewinding upstream thread c6be843c… to the session root`, a single
+  `chat_session_id` for the whole run, the post-rewind turn returning
+  `<sid>:6` so normal appends resumed, and the model answering `ALPHA-9` from the
+  re-rooted branch.
+
+- End-to-end through the TUI on the installed binary (`/compact` between turns),
+  from the session rollout and the bridge log:
+  `ACK` → compaction produced a `# Handoff Summary` naming **ALPHA-9** →
+  `responses: rewinding upstream thread fd5ffc63… to the session root` →
+  the follow-up question was answered `ALPHA-9`, with exactly one
+  `chat_session_id` for the entire run. One DeepSeek chat, rewound in place.
+- Observed wire shape worth noting: the core records the summary as an
+  *assistant* item, not a user message, so a prefix scan on user content cannot
+  be the primary signal. The message-less conversation id carried the rewind, as
+  designed above.

@@ -77,9 +77,11 @@ pub(crate) struct SessionState {
     pub(crate) history_reset: CancellationToken,
     pub(crate) latest_rate_limits: Option<RateLimitSnapshot>,
     pub(crate) latest_token_usage_record: Option<TokenUsageRecord>,
-    /// Opaque upstream thread token returned by the provider (local bridge).
-    /// Cleared whenever history is replaced so a new upstream thread is seeded
-    /// from the compacted transcript.
+    /// Opaque upstream thread token returned by the provider (local bridge),
+    /// formatted `<chat_session_id>:<message_id>`. A history reset clears it so
+    /// the next request seeds a new thread; a compaction keeps only the session
+    /// part, which re-roots (rewinds) the same upstream chat instead of
+    /// forking a second conversation the user never asked for.
     pub(crate) conversation_id: Option<String>,
     pub(crate) server_reasoning_included: bool,
     pub(crate) mcp_dependency_prompted: HashSet<String>,
@@ -206,9 +208,16 @@ impl SessionState {
         reference_context_item: Option<TurnContextItem>,
         replacement: HistoryReplacement,
     ) {
-        // The upstream conversation no longer matches the local transcript.
-        // Start the next request on a fresh thread seeded from this history.
-        self.conversation_id = None;
+        // The upstream conversation no longer matches the local transcript. A
+        // compaction rewinds it — same chat session, message id dropped, so the
+        // summary becomes the new root of the one chat the user already has.
+        // Any other replacement genuinely starts a fresh thread.
+        self.conversation_id = match &replacement {
+            HistoryReplacement::Compaction { .. } => {
+                self.conversation_id.as_deref().map(rewind_conversation_id)
+            }
+            HistoryReplacement::Reset => None,
+        };
         let invalidate_reviews = match replacement {
             HistoryReplacement::Compaction {
                 reviewer_compaction_hash,
@@ -473,6 +482,21 @@ fn merge_rate_limit_fields(
         snapshot.plan_type = previous.and_then(|prior| prior.plan_type);
     }
     snapshot
+}
+
+/// Rewind an opaque `<chat_session_id>:<message_id>` conversation token down to
+/// its session part.
+///
+/// The message id is what positions a prompt inside DeepSeek's message tree;
+/// dropping it makes the next completion start a new root **inside the same web
+/// chat**, which is what compaction needs so the sidebar keeps one conversation
+/// instead of forking a fresh one per summary.
+fn rewind_conversation_id(conversation_id: &str) -> String {
+    conversation_id
+        .split(':')
+        .next()
+        .unwrap_or(conversation_id)
+        .to_owned()
 }
 
 #[cfg(test)]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from deepseek.client import _decode_cid, rewind_cid
 from server import responses
 from server.responses import _response_events, _build_prompt, _prepare_tools
 from server.toolcall import parse_tool_calls
@@ -180,11 +181,11 @@ def test_task_complete_summary_becomes_final_text():
 def test_conversation_id_is_returned_and_resumed_with_only_new_turns():
     history = base_body(text="My favorite color is blue.")["input"]
     client = FakeClient(
-        [{"events": [("response", "Got it.")], "conversation_id": "conv-1"}]
+        [{"events": [("response", "Got it.")], "conversation_id": "conv-1:2"}]
     )
     events = events_of(_response_events(client, base_body(history=history, tools=TOOLS)))
     completed = [event for event in events if event["type"] == "response.completed"]
-    assert completed[0]["response"]["conversation_id"] == "conv-1"
+    assert completed[0]["response"]["conversation_id"] == "conv-1:2"
     assert client.conversation_ids == [None]
 
     history_with_answer = history + [
@@ -200,7 +201,7 @@ def test_conversation_id_is_returned_and_resumed_with_only_new_turns():
         },
     ]
     body = base_body(history=history_with_answer, tools=TOOLS)
-    body["conversation_id"] = "conv-1"
+    body["conversation_id"] = "conv-1:2"
     client.scripts.append({"events": [("response", "Blue.")], "conversation_id": "conv-2"})
     events = events_of(_response_events(client, body))
     completed = [event for event in events if event["type"] == "response.completed"]
@@ -213,7 +214,7 @@ def test_conversation_id_is_returned_and_resumed_with_only_new_turns():
     assert usage["input_tokens"] == responses._est_tokens(full_prompt)
     assert usage["input_tokens"] > len(client.prompts[1]) // 4
 
-    assert client.conversation_ids == [None, "conv-1"]
+    assert client.conversation_ids == [None, "conv-1:2"]
     resumed_prompt = client.prompts[1]
     assert resumed_prompt == "User: What is my favorite color?\n\nAssistant:"
     assert "## Conversation" not in resumed_prompt
@@ -236,9 +237,9 @@ def test_tool_result_continuation_sends_only_the_new_result():
           "conversation_id": "conv-3"}]
     )
     body = base_body(history=history, tools=TOOLS)
-    body["conversation_id"] = "conv-1"
+    body["conversation_id"] = "conv-1:2"
     events_of(_response_events(client, body))
-    assert client.conversation_ids == ["conv-1"]
+    assert client.conversation_ids == ["conv-1:2"]
     assert client.prompts[0].startswith("User:\n<tool_result")
     assert "/tmp/p" in client.prompts[0]
     assert "## Conversation" not in client.prompts[0]
@@ -247,7 +248,7 @@ def test_tool_result_continuation_sends_only_the_new_result():
 def test_conversation_id_without_assistant_history_starts_fresh():
     client = FakeClient([[("response", "Hello.")]])
     body = base_body(text="hi", tools=TOOLS)
-    body["conversation_id"] = "stale-thread"
+    body["conversation_id"] = "stale-thread:9"
     events_of(_response_events(client, body))
     assert client.conversation_ids == [None]
     assert "## Conversation" in client.prompts[0]
@@ -596,3 +597,123 @@ def test_thinking_follows_reasoning_effort_when_flag_absent():
     assert responses._request_thinking(body) is False
     body["thinking"] = True
     assert responses._request_thinking(body) is True
+
+
+# --------------------------------------------------------------------------- #
+# Compaction rewind: same chat_session_id, no message id                       #
+# --------------------------------------------------------------------------- #
+
+SID = "47e9f7ef-f94a-44e3-a0d6-47ee01c7d0e9"
+SUMMARY_BODY = (
+    "Another language model started to solve this problem and produced a summary "
+    "of its thinking process. Use this to build on the work that has already been "
+    "done.\nHere is the summary: the code word is ALPHA-9."
+)
+
+
+def _turn(role, text, extra=None):
+    item = {
+        "type": "message",
+        "role": role,
+        "content": [{"type": "input_text", "text": text}],
+    }
+    if extra:
+        item.update(extra)
+    return item
+
+
+def test_rewind_cid_keeps_the_session_and_drops_the_message_id():
+    assert rewind_cid(f"{SID}:87") == SID
+    # Already rewound, absent, or junk: no crash and no new session.
+    assert rewind_cid(SID) == SID
+    assert rewind_cid(None) is None
+    assert rewind_cid("") is None
+    # The transport decodes the rewound form as "same session, no parent".
+    assert _decode_cid(rewind_cid(f"{SID}:87")) == (SID, None)
+    assert _decode_cid(f"{SID}:87") == (SID, 87)
+    assert responses._is_rewound_cid(SID) is True
+    assert responses._is_rewound_cid(f"{SID}:87") is False
+
+
+def test_rewound_cid_sends_the_whole_compacted_transcript():
+    """The core rewinds after compaction by handing back the bare session id."""
+    history = [
+        _turn("user", SUMMARY_BODY),
+        _turn("user", "What was the code?"),
+    ]
+    body = base_body(history=history)
+    body["conversation_id"] = SID
+    client = FakeClient([[("response", "ALPHA-9.")]])
+
+    events_of(_response_events(client, body))
+
+    # Same chat_session_id, no message part: the summary re-roots this chat.
+    assert client.conversation_ids == [SID]
+    # A new root has no memory of the orphaned branch, so the full compacted
+    # transcript goes over rather than a continuation tail.
+    assert "## Conversation" in client.prompts[0]
+    assert "ALPHA-9" in client.prompts[0]
+
+
+def test_summary_with_a_positioned_cid_rewinds_instead_of_forking():
+    # Fallback when the summary arrives still positioned and there is no tail to
+    # continue: keep the session rather than opening a second chat.
+    body = base_body(history=[_turn("user", SUMMARY_BODY)])
+    body["conversation_id"] = f"{SID}:87"
+    client = FakeClient([[("response", "READY.")]])
+
+    events_of(_response_events(client, body))
+
+    assert client.conversation_ids == [SID]
+    assert "## Conversation" in client.prompts[0]
+
+
+def test_typed_compaction_item_rewinds_too():
+    history = [
+        _turn("user", "Remember the code ALPHA-9"),
+        {"type": "context_compaction"},
+        _turn("user", "What was the code?"),
+    ]
+    body = base_body(history=history)
+    body["conversation_id"] = f"{SID}:12"
+    client = FakeClient([[("response", "ALPHA-9.")]])
+
+    events_of(_response_events(client, body))
+
+    assert client.conversation_ids == [SID]
+
+
+def test_summary_left_in_history_does_not_rewind_later_turns():
+    # The summary stays in the transcript after compaction. Only the turn that
+    # introduces it may rewind, or every later turn would orphan its own reply.
+    history = [
+        _turn("user", SUMMARY_BODY),
+        _turn("assistant", "The code is ALPHA-9."),
+        _turn("user", "Now write it to a file"),
+    ]
+    body = base_body(history=history)
+    body["conversation_id"] = f"{SID}:99"
+    client = FakeClient([[("response", "done")]])
+
+    events_of(_response_events(client, body))
+
+    assert client.conversation_ids == [f"{SID}:99"]
+    assert "## Conversation" not in client.prompts[0]
+
+
+def test_ordinary_turn_still_appends_to_the_live_thread():
+    history = [
+        _turn("user", "Remember the code ALPHA-9"),
+        _turn("assistant", "Noted."),
+        _turn("user", "What was the code?"),
+    ]
+    body = base_body(history=history)
+    body["conversation_id"] = f"{SID}:87"
+    client = FakeClient([[("response", "ALPHA-9.")]])
+
+    events_of(_response_events(client, body))
+
+    # No compaction: the message id stays so the thread continues in place, and
+    # only the new tail is sent.
+    assert client.conversation_ids == [f"{SID}:87"]
+    assert "## Conversation" not in client.prompts[0]
