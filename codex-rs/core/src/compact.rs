@@ -54,7 +54,6 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::user_input::UserInput;
 use codex_rollout_trace::InferenceTraceContext;
-use codex_utils_output_truncation::approx_token_count;
 use futures::prelude::*;
 use tracing::error;
 
@@ -723,7 +722,9 @@ fn build_compacted_history_with_limit(
             if remaining == 0 {
                 break;
             }
-            let tokens = approx_token_count(&message.message);
+            let tokens =
+                usize::try_from(codex_utils_tokenizer::count_cached(&message.message))
+                    .unwrap_or(usize::MAX);
             let ResponseItem::Message {
                 id,
                 content,

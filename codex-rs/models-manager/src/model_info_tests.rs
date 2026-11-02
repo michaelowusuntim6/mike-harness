@@ -239,6 +239,20 @@ fn unknown_model_uses_builtin_instruction_template() {
 }
 
 #[test]
+fn deepseek_fallback_metadata_declares_the_mike_window() {
+    let model = model_info_from_slug("deepseek-v4.1-flash");
+
+    assert_eq!(model.context_window, Some(400_000));
+    assert_eq!(model.max_context_window, Some(400_000));
+    assert_eq!(model.auto_compact_token_limit, Some(320_000));
+    // The footer shows usable_context_window(); an effective percent below 100
+    // would print a smaller window than the one configured.
+    assert_eq!(model.usable_context_window(), Some(400_000));
+    // 320,000 is under the 90% cap, so the configured limit is what applies.
+    assert_eq!(model.auto_compact_token_limit(), Some(320_000));
+}
+
+#[test]
 fn model_context_window_override_clamps_to_max_context_window() {
     let mut model = model_info_from_slug("unknown-model");
     model.context_window = Some(273_000);

@@ -113,18 +113,23 @@ deterministic for tests.
 rejected: slow, costs a request, and can omit sections. A model call is
 available via the `summarizer` hook if wanted.
 
-### C2. Token counter: tiktoken with persisted choice
-**Decision.** Use `tiktoken` (`cl100k_base`) if importable, else `len(text)//4`.
-Persist the chosen estimator name in `.mike_state.json`.
-**Rationale.** Brief requires it and asks the choice be persisted.
-**Alternatives.** Always heuristic — rejected: less accurate where tiktoken is
-available.
+### C2. Token counter: DeepSeek BPE, then tiktoken, then heuristic
+**Decision.** Count with the embedded DeepSeek tokenizer
+(`assets/tokenizer.json` through `server/token_counter.py`); fall back to
+`tiktoken` (`cl100k_base`), then `len(text)//4`. Persist the chosen estimator name
+in `.mike_state.json`.
+**Rationale.** `cl100k_base` is the OpenAI vocabulary; measured on this repo's own
+source the byte heuristic swings +10% on prose and −30% on identifier-dense code,
+which delays compaction. The counter must never crash the bridge, so it degrades
+with one warning instead of raising.
+**Alternatives.** tiktoken as primary — rejected: wrong tokenizer for the model
+actually being counted.
 
 ### C3. Thresholds
-**Decision.** `MAX_CONTEXT_TOKENS = 500_000` (overridable via `MIKE_MAX_CONTEXT`),
-`COMPACT_THRESHOLD = 0.80` → trigger at `400_000`, `KEEP_RECENT_TURNS = 6`.
-**Rationale.** Exactly what the brief specifies; `/tokens` reports the derived
-400,000 threshold.
+**Decision.** `max_context = 400_000` (overridable via `MIKE_MAX_CONTEXT`),
+`compact_threshold = 0.80` → trigger at `320_000`, `KEEP_RECENT_TURNS = 6`.
+**Rationale.** Raised from 120,000 once counting became exact; see the
+supersession note under v0.12 D2 in `../../docs/DECISIONS.md`.
 **Alternatives.** None sensible.
 
 ### C4. Session files are atomic and human-readable

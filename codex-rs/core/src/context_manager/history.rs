@@ -53,6 +53,8 @@ use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::ImageDetail;
 use codex_protocol::models::ImageReference;
+use codex_protocol::models::ReasoningItemContent;
+use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -66,7 +68,6 @@ use codex_utils_cache::BlockingLruCache;
 use codex_utils_cache::sha1_digest;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::approx_bytes_for_tokens;
-use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::approx_tokens_from_byte_count_i64;
 use codex_utils_output_truncation::truncate_function_output_payload;
 use codex_utils_output_truncation::with_serialization_allowance;
@@ -670,7 +671,7 @@ impl ContextManager {
         let base_tokens = if has_recorded_instructions {
             0
         } else {
-            i64::try_from(approx_token_count(&base_instructions.text)).unwrap_or(i64::MAX)
+            codex_utils_tokenizer::count_cached(&base_instructions.text)
         };
 
         let items_tokens = self
@@ -1067,13 +1068,113 @@ fn estimate_encrypted_function_output_length(encoded_len: usize) -> usize {
     encoded_len.saturating_mul(9).div_ceil(16)
 }
 
-/// Returns the same coarse, model-visible token estimate used for full history estimates.
+/// Returns the model-visible token cost of one history item.
 ///
-/// Counts content directly, excluding transport IDs, metadata, and outer JSON escaping.
-/// Original-detail file images use the maximum patch count.
+/// An item whose payload is entirely text is counted with the embedded DeepSeek
+/// tokenizer and memoized, so a turn pays only for the items it added. Anything
+/// carrying images, audio or opaque base64 keeps the previous whole-item byte
+/// heuristic: those payloads have no text to tokenize, and leaving them on the
+/// old path means nothing is counted twice. When the tokenizer cannot load,
+/// `count_cached` degrades to the same `ceil(bytes / 4)` estimate.
 pub(crate) fn estimate_item_token_count(item: &ResponseItem) -> i64 {
-    let model_visible_bytes = estimate_response_item_model_visible_bytes(item);
-    approx_tokens_from_byte_count_i64(model_visible_bytes)
+    match pure_model_visible_text(item) {
+        Some(text) => codex_utils_tokenizer::count_cached(&text),
+        None => approx_tokens_from_byte_count_i64(estimate_response_item_model_visible_bytes(item)),
+    }
+}
+
+/// The text an item makes the model read, but only when that is the whole payload.
+///
+/// This includes plaintext reasoning summary and content, which the byte estimator
+/// scores as zero even though this bridge replays earlier thinking into every
+/// prompt (`responses.py` renders `<reasoning>…</reasoning>`). Framing and
+/// transport ids are intentionally left out: the bridge's reported usage already
+/// covers the envelope, and counting it here too would inflate the total.
+fn pure_model_visible_text(item: &ResponseItem) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    let text_only = match item {
+        ResponseItem::Message { content, .. } => {
+            for part in content {
+                match part {
+                    ContentItem::InputText { text }
+                    | ContentItem::OutputText { text, .. } => parts.push(text),
+                    ContentItem::InputImage { .. } | ContentItem::InputAudio { .. } => return None,
+                }
+            }
+            true
+        }
+        ResponseItem::AgentMessage {
+            author,
+            recipient,
+            content,
+            ..
+        } => {
+            parts.push(author);
+            parts.push(recipient);
+            for part in content {
+                match part {
+                    AgentMessageInputContent::InputText { text } => parts.push(text),
+                    AgentMessageInputContent::EncryptedContent { .. } => return None,
+                }
+            }
+            true
+        }
+        ResponseItem::FunctionCall {
+            name,
+            namespace,
+            arguments,
+            ..
+        }
+        | ResponseItem::CustomToolCall {
+            name,
+            namespace,
+            input: arguments,
+            ..
+        } => {
+            parts.push(name);
+            parts.push(namespace.as_deref().unwrap_or(DEFAULT_FUNCTION_NAMESPACE));
+            parts.push(arguments);
+            true
+        }
+        ResponseItem::FunctionCallOutput { output, .. }
+        | ResponseItem::CustomToolCallOutput { output, .. } => {
+            match &output.body {
+                FunctionCallOutputBody::Text(text) => parts.push(text),
+                FunctionCallOutputBody::ContentItems(items) => {
+                    for part in items {
+                        match part {
+                            FunctionCallOutputContentItem::InputText { text } => parts.push(text),
+                            _ => return None,
+                        }
+                    }
+                }
+            }
+            true
+        }
+        ResponseItem::Reasoning {
+            encrypted_content: None,
+            summary,
+            content,
+            ..
+        } => {
+            for entry in summary {
+                let ReasoningItemReasoningSummary::SummaryText { text } = entry;
+                parts.push(text);
+            }
+            for entry in content.iter().flatten() {
+                match entry {
+                    ReasoningItemContent::ReasoningText { text }
+                    | ReasoningItemContent::Text { text } => parts.push(text),
+                }
+            }
+            true
+        }
+        _ => false,
+    };
+    if !text_only || parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("\n"))
 }
 
 /// Approximate model-visible byte cost for one image input.

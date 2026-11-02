@@ -138,6 +138,7 @@ members = [
     "utils/redacted-string",
     "utils/rustls-provider",
     "utils/string",
+    "utils/tokenizer",
     "utils/cli",
     "utils/elapsed",
     "utils/sandbox-summary",
@@ -324,6 +325,7 @@ codex-utils-sleep-inhibitor = { path = "utils/sleep-inhibitor" }
 codex-utils-stream-parser = { path = "utils/stream-parser" }
 codex-utils-string = { path = "utils/string" }
 codex-utils-template = { path = "utils/template" }
+codex-utils-tokenizer = { path = "utils/tokenizer" }
 codex-user-verification = { path = "user-verification" }
 codex-workload-identity = { path = "workload-identity" }
 codex-windows-sandbox = { path = "windows-sandbox-rs" }
@@ -520,6 +522,7 @@ thiserror = "2.0.17"
 tikv-jemallocator = "=0.7.0"
 time = "0.3.47"
 tiny_http = "0.12"
+tokenizers = "0.23"
 tokio = "1"
 tokio-rustls = "0.26.4"
 tokio-stream = "0.1.18"

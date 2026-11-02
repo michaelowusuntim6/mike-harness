@@ -250,8 +250,8 @@ already holds the rest).
 
 ### Changing the context budget
 
-The max context is **120,000 tokens** by default, and auto-compaction triggers at
-**80%** of it (i.e. **96,000 tokens**). Override the max with an environment
+The max context is **400,000 tokens** by default, and auto-compaction triggers at
+**80%** of it (i.e. **320,000 tokens**). Override the max with an environment
 variable or a config file — the threshold follows automatically:
 
 ```bash
@@ -259,8 +259,12 @@ MIKE_MAX_CONTEXT=200000 python mike.py     # => compacts at 160,000
 python mike.py --max-context 200000        # same, via a flag
 ```
 
-Token counting uses `tiktoken` when available and falls back to a `len//4`
-heuristic; the choice is persisted in `.mike_state.json`.
+Token counting uses the embedded DeepSeek BPE tokenizer
+(`assets/tokenizer.json`, via `server/token_counter.py`), falling back to
+`tiktoken`'s `cl100k_base` and then a `len//4` heuristic only if that asset or
+library is unavailable; the choice is persisted in `.mike_state.json`. The Rust
+counter reads the same asset and both sides assert
+`assets/tokenizer_parity.json`.
 
 ---
 

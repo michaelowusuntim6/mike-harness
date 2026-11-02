@@ -139,7 +139,7 @@ REPO_CONFIG = ROOT / "mike.toml"
 # Every key is optional; these are the defaults. This block is the ONLY place
 # these literals occur in mike.py.
 DEFAULTS = {
-    "max_context": 120_000,        # total tokens before compaction is possible
+    "max_context": 400_000,        # total tokens before compaction is possible
     "compact_threshold": 0.80,     # fraction of max_context that triggers compaction
     "keep_recent_turns": 6,        # turns preserved verbatim across a compaction
     "server_host": "127.0.0.1",
@@ -377,18 +377,30 @@ def atomic_write_json(path: Path, obj: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Token estimation (tiktoken if available, else len//4)                     #
+# 4. Token estimation (DeepSeek BPE, else tiktoken, else len//4)               #
 # --------------------------------------------------------------------------- #
 
 class TokenCounter:
-    """Deterministic token estimator with a persisted implementation choice."""
+    """Deterministic token estimator with a persisted implementation choice.
 
-    def __init__(self, name: str, encoder: Any = None):
+    The bridge's BPE counter is reused when importable; ``cl100k_base`` is the
+    OpenAI vocabulary and miscounts DeepSeek text, so it is only a fallback.
+    """
+
+    def __init__(self, name: str, encoder: Any = None, bpe: Any = None):
         self.name = name
         self._enc = encoder
+        self._bpe = bpe
 
     @classmethod
     def create(cls) -> "TokenCounter":
+        try:
+            from server.token_counter import count_tokens, implementation
+
+            if implementation() != "heuristic":
+                return cls("deepseek-bpe", None, count_tokens)
+        except Exception:
+            pass
         try:
             import tiktoken  # type: ignore
 
@@ -398,9 +410,15 @@ class TokenCounter:
         except Exception:
             return cls("heuristic", None)
 
+    @property
+    def exact(self) -> bool:
+        return self._bpe is not None
+
     def count(self, text: str) -> int:
         if not text:
             return 0
+        if self._bpe is not None:
+            return self._bpe(text)
         if self._enc is not None:
             try:
                 return len(self._enc.encode(text))
@@ -410,8 +428,11 @@ class TokenCounter:
 
     def count_messages(self, messages: Iterable[dict]) -> int:
         total = 0
+        # A real tokenizer counts the role/framing text itself; the +4 slack only
+        # belongs to the estimators.
+        framing = 0 if self.exact else 4
         for msg in messages:
-            total += 4  # per-message framing overhead
+            total += framing
             total += self._count_content(msg.get("content", ""))
             reasoning = msg.get("reasoning")
             if reasoning:

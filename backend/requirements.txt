@@ -12,7 +12,8 @@ openai
 rich>=13.7              # terminal rendering: tables, panels, dimmed thinking
 prompt_toolkit>=3.0     # Codex-style composer, multiline input, completion, history
 pygments>=2.17          # syntax highlighting for markdown and diffs
-tiktoken>=0.7           # token estimation for context compaction
+tokenizers==0.23.3      # exact DeepSeek BPE counts (assets/tokenizer.json); matches the Rust crate
+tiktoken>=0.7           # fallback token estimation when the BPE asset is unavailable
 pytest>=8.0             # test suite (tests/test_mike.py)
 # NOTE: config parsing uses stdlib `tomllib` (Python 3.11+). On older
 # interpreters mike falls back to `tomli` if it is installed; it is optional and

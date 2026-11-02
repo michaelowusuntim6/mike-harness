@@ -40,12 +40,15 @@ from .toolcall import (
     strip_tool_results,
 )
 
+from .token_counter import count_segments, count_tokens
+
 log = logging.getLogger("uvicorn.error")
 
 EMPTY_MAX_ATTEMPTS = 3
 MAX_TOOL_CALLS = 16
 MAX_TOOL_PROMPT_CHARS = 240_000
 MAX_DESCRIPTION_CHARS = 4_000
+PROMPT_TAIL = "\n\nAssistant:"
 
 BASE_PROMPT = """You are mike, an autonomous coding agent running locally on the user's machine.
 You are powered by DeepSeek V4.1 Flash through a local bridge. You DO things with tools instead of explaining how.
@@ -172,7 +175,8 @@ def _sse(obj: dict) -> str:
 
 
 def _est_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    """Token count of *text*: exact when the DeepSeek tokenizer is available."""
+    return count_tokens(text)
 
 
 def _text_of_content(content: Any) -> str:
@@ -468,7 +472,13 @@ def _build_history(body: dict) -> tuple[list[str], list[str], dict[str, str], st
     return dev_parts, dialogue, call_names, last_action
 
 
-def _build_prompt(body: dict, specs: list[dict]) -> tuple[str, str]:
+def _prompt_parts(body: dict, specs: list[dict]) -> tuple[list[str], str]:
+    """The structural pieces of a prompt, and the last action's kind.
+
+    Keeping them split lets usage accounting reuse the count of every part the
+    bridge has already seen instead of re-encoding a multi-hundred-kilobyte
+    prompt on each turn.
+    """
     dev_parts, dialogue, _, last_action = _build_history(body)
     parts = [BASE_PROMPT.strip()]
     if dev_parts:
@@ -477,7 +487,12 @@ def _build_prompt(body: dict, specs: list[dict]) -> tuple[str, str]:
         parts.append(_tool_prompt(specs))
     conversation = "\n\n".join(dialogue) if dialogue else "(no messages)"
     parts.append("## Conversation\n\n" + conversation)
-    return "\n\n".join(parts).strip() + "\n\nAssistant:", last_action
+    return parts, last_action
+
+
+def _build_prompt(body: dict, specs: list[dict]) -> tuple[str, str, list[str]]:
+    parts, last_action = _prompt_parts(body, specs)
+    return "\n\n".join(parts).strip() + PROMPT_TAIL, last_action, parts
 
 
 def _is_assistant_output(item: Any) -> bool:
@@ -711,9 +726,15 @@ def _emit_completed(
     raw: str,
     reasoning: str,
     conversation_id: str | None = None,
+    segments: list[str] | None = None,
 ) -> str:
-    input_tokens = _est_tokens(prompt)
-    output_tokens = _est_tokens(raw + reasoning)
+    # ``segments`` is the same prompt split at its structural joins, so parts the
+    # bridge has already counted are reused instead of re-encoding every turn.
+    if segments is not None:
+        input_tokens = count_segments([*segments, PROMPT_TAIL])
+    else:
+        input_tokens = count_tokens(prompt)
+    output_tokens = count_tokens(raw + reasoning)
     return _sse(
         {
             "type": "response.completed",
@@ -751,7 +772,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
     response_id = _new_id("resp")
     # The web backend exposes one model; every accepted alias maps to it.
     specs, lookup = _prepare_tools(body.get("tools"))
-    full_prompt, last_action = _build_prompt(body, specs)
+    full_prompt, last_action, prompt_parts = _build_prompt(body, specs)
     raw_cid = body.get("conversation_id")
     incoming_cid = raw_cid.strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
     upstream_cid = incoming_cid
@@ -929,7 +950,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
                 yield from _emit_reasoning(reasoning)
             yield from _emit_text(final_text, streamed_text, message_item_id, message_added)
             yield _emit_completed(
-                response_id, full_prompt, raw, reasoning, upstream_cid
+                response_id, full_prompt, raw, reasoning, upstream_cid, prompt_parts
             )
             return
 
@@ -940,7 +961,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
             for call in tool_calls:
                 yield _emit_tool_call(call)
             yield _emit_completed(
-                response_id, full_prompt, raw, reasoning, upstream_cid
+                response_id, full_prompt, raw, reasoning, upstream_cid, prompt_parts
             )
             return
 
@@ -960,7 +981,7 @@ def _response_events(client, body: dict) -> Iterable[str]:
             yield from _emit_reasoning(reasoning)
         yield from _emit_text(clean, streamed_text, message_item_id, message_added)
         yield _emit_completed(
-            response_id, full_prompt, raw, reasoning, upstream_cid
+            response_id, full_prompt, raw, reasoning, upstream_cid, prompt_parts
         )
         return
 

@@ -275,7 +275,7 @@ def test_reasoning_items_are_replayed_in_the_prompt():
         },
     ]
     specs, _ = _prepare_tools(TOOLS)
-    prompt, _ = _build_prompt(base_body(history=history), specs)
+    prompt, _, _ = _build_prompt(base_body(history=history), specs)
     assert "<reasoning>\nI checked the file.\n</reasoning>" in prompt
 
 
@@ -535,7 +535,7 @@ def test_native_codex_prompts_are_stripped_from_the_prompt():
     ]
     body = base_body(history=history, tools=TOOLS)
     body["instructions"] = "You are Codex, native system prompt."
-    prompt, _ = _build_prompt(body, _prepare_tools(TOOLS)[0])
+    prompt, _, _ = _build_prompt(body, _prepare_tools(TOOLS)[0])
     assert "permissions instructions" not in prompt
     assert "collaboration_mode" not in prompt
     assert "You are Codex" not in prompt

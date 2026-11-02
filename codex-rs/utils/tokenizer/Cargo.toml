@@ -1,0 +1,21 @@
+[package]
+name = "codex-utils-tokenizer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-utils-string = { workspace = true }
+lru = { workspace = true }
+sha1 = { workspace = true }
+tokenizers = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+[lib]
+doctest = false

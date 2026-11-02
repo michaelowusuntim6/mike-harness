@@ -66,8 +66,15 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - DeepThink on/off toggle: `/think` flips the bridge's `thinking` flag between
   off and on, matching the DeepSeek web chat toggle.
 - Live context footer: the status line shows the model and current context
-  usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 120,000 · ~/dir · thread`.
-  The 120,000-token window is compacted automatically at 80% (`96,000`).
+  usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 400,000 · ~/dir · thread`.
+  The 400,000-token window is compacted automatically at 80% (`320,000`).
+- Exact token counting: DeepSeek's published HuggingFace tokenizer
+  (`assets/tokenizer.json`) is embedded in both the bridge and the Rust core, so
+  context math counts the text that is actually sent — including system
+  instructions, reasoning replay, tool-call JSON and tool results — instead of
+  estimating `bytes/4`. Expect the footer to move in either direction after the
+  switch: the heuristic over-counted prose by up to 10% and under-counted
+  identifier-dense code by up to 30%.
 - Network resilience: HTTP 5xx, connection resets, and timeouts are retried
   five times with exponential backoff and jitter (1s, 2s, 4s, 8s, 16s). A
   dropped SSE stream transparently re-issues the request against the existing
@@ -208,13 +215,13 @@ The footer status line defaults to `model`, `context-tokens`, `current-dir`,
 and `thread-name`, so it renders like:
 
 ```text
-DeepSeek V4.1 Flash · Ctx: 2,966 / 120,000 · ~/mike-harness · New Coding Session
+DeepSeek V4.1 Flash · Ctx: 2,966 / 400,000 · ~/mike-harness · New Coding Session
 ```
 
-`Ctx` is the estimated tokens currently in the context window out of its
-120,000-token capacity; auto-compaction starts at 96,000 tokens. Adjust the
-selection with `/statusline` or the `[tui] status_line` array in
-`~/.mike/config.toml`.
+`Ctx` is the token count currently in the context window out of its 400,000-token
+capacity, measured with the embedded DeepSeek tokenizer; auto-compaction starts at
+320,000 tokens. Adjust the selection with `/statusline` or the `[tui] status_line`
+array in `~/.mike/config.toml`.
 
 DeepThink matches DeepSeek's web chat, which only offers off and on. `/think`
 switches between off (`model_reasoning_effort = "none"`) and on (`"low"`) and

@@ -1,0 +1,71 @@
+{
+  "vocab": "deepseek-bpe-128k",
+  "asset": "assets/tokenizer.json",
+  "note": "Token counts taken with add_special_tokens=False. Both the Rust (codex-utils-tokenizer) and Python (server.token_counter) suites assert these, so the two can never drift apart silently.",
+  "vectors": [
+    {
+      "text": "",
+      "tokens": 0
+    },
+    {
+      "text": "hello",
+      "tokens": 1
+    },
+    {
+      "text": "Hello, world!",
+      "tokens": 4
+    },
+    {
+      "text": "The quick brown fox jumps over the lazy dog.",
+      "tokens": 10
+    },
+    {
+      "text": "def main():\n    print('hi')\n",
+      "tokens": 8
+    },
+    {
+      "text": "cd /home/mike/slnm && git status --short",
+      "tokens": 13
+    },
+    {
+      "text": "你好，世界",
+      "tokens": 3
+    },
+    {
+      "text": "▁leading▁underscores▁",
+      "tokens": 9
+    },
+    {
+      "text": "<｜begin▁of▁sentence｜>",
+      "tokens": 1
+    },
+    {
+      "text": "<｜end▁of▁sentence｜>",
+      "tokens": 1
+    },
+    {
+      "text": "<｜begin▁of▁sentence｜>user<｜end▁of▁sentence｜>",
+      "tokens": 3
+    },
+    {
+      "text": "{\"name\": \"exec_command\", \"arguments\": {\"cmd\": \"ls -la\"}}",
+      "tokens": 19
+    },
+    {
+      "text": "SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=SGVsbG8sIHdvcmxkIQo=",
+      "tokens": 104
+    },
+    {
+      "text": "👩‍👩‍👧‍👦 family 🚀 launch ✅",
+      "tokens": 17
+    },
+    {
+      "text": "Line of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\nLine of tool output\n",
+      "tokens": 600
+    },
+    {
+      "text": "User: do the task\n\nAssistant: ",
+      "tokens": 9
+    }
+  ]
+}

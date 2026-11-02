@@ -40,6 +40,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol_test_support::ContentItemTestExt;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_output_truncation::approx_token_count;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
 use image::ImageBuffer;
@@ -1547,9 +1548,17 @@ fn estimate_token_count_with_base_instructions_uses_provided_text() {
         .estimate_token_count_with_base_instructions(&long_base)
         .expect("token estimate");
 
-    let expected_delta = approx_token_count_for_text(&long_base.text)
-        - approx_token_count_for_text(&short_base.text);
+    // Base instructions are counted with the embedded tokenizer, so the delta is
+    // the BPE cost of the two texts rather than their byte length.
+    let expected_delta = codex_utils_tokenizer::count_cached(&long_base.text)
+        - codex_utils_tokenizer::count_cached(&short_base.text);
     assert_eq!(long_estimate - short_estimate, expected_delta);
+    let heuristic_delta = approx_token_count_for_text(&long_base.text)
+        - approx_token_count_for_text(&short_base.text);
+    assert_ne!(
+        expected_delta, heuristic_delta,
+        "counting should not have fallen back to ceil(bytes / 4)"
+    );
 }
 
 #[test]

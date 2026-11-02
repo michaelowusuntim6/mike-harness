@@ -2,3 +2,7 @@ codex-rs/app-server-protocol/schema/** linguist-generated
 codex-rs/hooks/schema/generated/** linguist-generated
 third_party/voice/sources.json text eol=lf
 patches/v8_array_sort_elements_kind.patch text eol=lf
+# Downloaded DeepSeek tokenizer: never reformat or line-endify it, and keep the
+# 6 MB blob out of diffs (each edit would be a permanent git object).
+assets/tokenizer.json linguist-generated -diff -text
+assets/tokenizer_config.json linguist-generated -text

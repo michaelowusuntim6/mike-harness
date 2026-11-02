@@ -60,6 +60,7 @@ from .openai_format import (
 from .ratelimit import RateLimiter, install_rate_limit
 from .responses import build_responses_endpoint
 from .schemas import ChatCompletionRequest
+from .token_counter import describe as tokenizer_description, warm as warm_tokenizer
 
 load_dotenv()
 
@@ -70,6 +71,11 @@ logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Mike DeepSeek Bridge", version="1.1.0")
 install_rate_limit(app, RateLimiter(limit=RATE_LIMIT_PER_MINUTE, window=60.0))
+
+# Loading the tokenizer costs a few hundred ms once; paying it here keeps the
+# first turn of a session off that bill.
+warm_tokenizer()
+logger.info("api: token counter = %s", tokenizer_description())
 
 # One shared client (and its signed-in session) built lazily on first use.
 _client: DeepSeekClient | None = None

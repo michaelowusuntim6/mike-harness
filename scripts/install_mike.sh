@@ -25,6 +25,11 @@ if [[ ! -x "$BACKEND_SRC/venv/bin/python" ]]; then
   echo "install: creating backend virtualenv..."
   python3 -m venv "$BACKEND_SRC/venv"
   "$BACKEND_SRC/venv/bin/python" -m pip install -r "$BACKEND_SRC/requirements.txt"
+elif ! "$BACKEND_SRC/venv/bin/python" -c "import tokenizers" >/dev/null 2>&1; then
+  # A venv created before the tokenizer requirement would otherwise leave the
+  # bridge silently counting with the len//4 heuristic.
+  echo "install: updating backend virtualenv..."
+  "$BACKEND_SRC/venv/bin/python" -m pip install -r "$BACKEND_SRC/requirements.txt"
 fi
 
 echo "install: building mike..."
@@ -39,8 +44,22 @@ rsync -a --delete \
   --exclude '.pytest_cache/' \
   "$BACKEND_SRC/" "$BACKEND_DST/"
 
+# The bridge loads the embedded DeepSeek tokenizer from its own tree; rsync
+# --delete prunes it, so it is installed after the copy, not committed under
+# backend/ twice.
+install -D -m 0644 "$ROOT/assets/tokenizer.json" "$BACKEND_DST/assets/tokenizer.json"
+install -D -m 0644 "$ROOT/assets/tokenizer_config.json" "$BACKEND_DST/assets/tokenizer_config.json"
+
 cp -n "$ROOT/mike-config.toml" "$HOME/.mike/config.toml" 2>/dev/null || true
-cp -n "$ROOT/mike-models.json" "$HOME/.mike/mike-models.json" 2>/dev/null || true
+
+# The model catalog ships window/compaction numbers the binary reads; `cp -n`
+# left stale installs counting against an old limit, so it is replaced — with the
+# previous copy kept for anyone who edited it by hand.
+if [[ -f "$HOME/.mike/mike-models.json" ]] && ! cmp -s "$ROOT/mike-models.json" "$HOME/.mike/mike-models.json"; then
+  cp "$HOME/.mike/mike-models.json" "$HOME/.mike/mike-models.json.bak"
+  echo "install: updated model catalog (previous copy kept as ~/.mike/mike-models.json.bak)"
+fi
+cp -f "$ROOT/mike-models.json" "$HOME/.mike/mike-models.json"
 
 echo "install: done"
 echo "  binary:  $BIN_DIR/mike"

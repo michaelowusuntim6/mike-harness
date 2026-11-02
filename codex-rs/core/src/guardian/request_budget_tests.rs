@@ -115,7 +115,9 @@ async fn request_histogram_counts_admitted_steps_without_counting_retry_preparat
             BTreeMap::from([
                 ("target".to_owned(), "sync".to_owned()),
                 ("component".to_owned(), "total".to_owned()),
-                ("token_bucket".to_owned(), "02_20k-40k".to_owned()),
+                // Exact tokenizer counts put this request under 20k tokens; the
+                // ceil(bytes/4) estimate it replaces landed in the next bucket.
+                ("token_bucket".to_owned(), "01_0-20k".to_owned()),
             ]),
             (2, sum as f64),
         )])
