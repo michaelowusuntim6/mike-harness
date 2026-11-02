@@ -53,8 +53,12 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
   `<｜DSML｜ calls>`), `string="true"` vs raw JSON parameters, empty invokes,
   truncated calls, and trailing garbage. Stray `｜DSML｜` fragments left inside
   extracted arguments (for example `{"cmd": "pwd</｜｜DSML｜｜>"}`) are stripped,
-  so the shell receives `pwd`. Includes one completion nudge and empty-stream
-  retries.
+  so the shell receives `pwd`. The web model's degenerate repetitions are
+  tolerated too: doubled bars (`<｜｜DSML｜｜ parameter>`), close tags missing
+  their `<`, the same parameter re-emitted until the token limit cuts the last
+  copy (the fullest value wins), and a whole payload wrapped in one parameter
+  named `arguments`, which is unpacked back onto the call. Includes one
+  completion nudge and empty-stream retries.
 - Live activity indicator: a 100 ms braille spinner and a live `Working (Xs)`
   elapsed timer run while the model generates or tools execute, and stop at
   turn completion (`[tui] animations = true`, the default).

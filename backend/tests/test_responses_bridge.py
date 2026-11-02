@@ -348,6 +348,99 @@ def test_dsml_ignores_trailing_garbage_after_block():
     assert "done" in clean
 
 
+def test_dsml_arguments_parameter_holding_json_object_is_unwrapped():
+    # The bridge teaches {"name": ..., "arguments": {...}}; the web model
+    # transposes that shape into DSML, which would leave exec_command without
+    # its required `cmd` unless the wrapper is folded back onto the call.
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"arguments\" string=\"true\">"
+        "{\"cmd\":\"cd /home/mike/slnm && ls\"}</｜｜DSML｜｜ parameter>\n"
+        "</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls == [
+        {"name": "exec_command", "arguments": {"cmd": "cd /home/mike/slnm && ls"}}
+    ]
+
+
+def test_dsml_stray_arguments_marker_is_dropped():
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"arguments\" string=\"true\">true"
+        "</｜｜DSML｜｜ parameter>\n"
+        "<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">ls</｜｜DSML｜｜ parameter>\n"
+        "</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "ls"}}]
+
+
+def test_dsml_value_ends_at_a_close_tag_missing_its_angle_bracket():
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"arguments\" string=\"true\">"
+        "true｜｜DSML｜｜ parameter>\n"
+        "<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">echo MARK"
+        "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "echo MARK"}}]
+
+
+def test_dsml_repetition_collapse_keeps_the_fullest_parameter():
+    # A collapsed model re-emits one parameter dozens of times and the stream is
+    # cut by the token limit, so the last copy is a truncated prefix.
+    repeats = "".join(
+        "<｜｜DSML｜｜ parameter name=\"cmd\">cd /home/mike/slnm && git status"
+        "</｜｜DSML｜｜ parameter>\n"
+        "<｜｜DSML｜｜ parameter name=\"cmd\">cd /home/mike/slnm"
+        for _ in range(20)
+    )
+    block = (
+        "Let me check the tree.\n\n<｜｜DSML｜｜ calls>\n"
+        "<｜｜DSML｜｜ invoke name=\"exec_command\">\n" + repeats
+    )
+    calls, clean = parse_tool_calls(block)
+    assert calls == [
+        {"name": "exec_command", "arguments": {"cmd": "cd /home/mike/slnm && git status"}}
+    ]
+    assert clean == "Let me check the tree."
+
+
+def test_dsml_truncated_block_then_new_block_yields_two_calls():
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"cmd\">pwd｜｜DSML｜｜ parameter>\n\n"
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">echo SECOND"
+        "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert [call["arguments"]["cmd"] for call in calls] == ["pwd", "echo SECOND"]
+
+
+def test_dsml_lone_arguments_marker_leaves_no_arguments():
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"exec_command\">\n"
+        "<｜｜DSML｜｜ parameter name=\"arguments\" string=\"true\">true"
+        "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls == [{"name": "exec_command", "arguments": {}}]
+
+
+def test_dsml_freeform_input_is_not_treated_as_a_wrapper():
+    block = (
+        "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"apply_patch\">\n"
+        "<｜｜DSML｜｜ parameter name=\"input\" string=\"true\">"
+        "*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch"
+        "</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+    )
+    calls, _ = parse_tool_calls(block)
+    assert calls[0]["arguments"]["input"].startswith("*** Begin Patch")
+
+
 def test_orphaned_dsml_in_json_arguments_is_stripped():
     envelope = json.dumps(
         {"name": "exec_command", "arguments": {"cmd": "pwd</｜｜DSML｜｜>"}}

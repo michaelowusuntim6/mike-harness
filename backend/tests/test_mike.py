@@ -114,6 +114,65 @@ def test_dsml_hidden_from_content():
     assert "DSML" not in clean
 
 
+DBAR = f"{BAR * 2}DSML{BAR * 2}"  # the web model doubles the full-width bars
+
+
+def _ddsml(name, params):
+    p = (f"<{DBAR} parameter name=\"%s\" string=\"true\">%s</{DBAR} parameter>")
+    body = "\n".join(p % (k, v) for k, v in params)
+    return (f"<{DBAR} calls>\n<{DBAR} invoke name=\"{name}\">\n{body}\n"
+            f"</{DBAR} invoke>\n</{DBAR} calls>")
+
+
+def test_parse_dsml_doubled_bars():
+    text = _ddsml("exec_command", [("cmd", "cd /tmp && ls")])
+    calls, clean = mike.parse_tool_calls(text)
+    assert calls == [{"name": "exec_command",
+                      "arguments": {"cmd": "cd /tmp && ls"}}]
+    assert "DSML" not in clean
+
+
+def test_dsml_arguments_parameter_holding_json_is_unwrapped():
+    # The prompt's JSON envelope shape leaks into DSML as a parameter literally
+    # named "arguments"; without unwrapping it the tool has no `cmd`.
+    text = _ddsml("exec_command",
+                  [("arguments", '{"cmd":"cd /tmp && ls"}')])
+    calls, _ = mike.parse_tool_calls(text)
+    assert calls == [{"name": "exec_command",
+                      "arguments": {"cmd": "cd /tmp && ls"}}]
+
+
+def test_dsml_stray_arguments_marker_is_dropped():
+    text = _ddsml("exec_command", [("arguments", "true"), ("cmd", "ls")])
+    calls, _ = mike.parse_tool_calls(text)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "ls"}}]
+
+
+def test_dsml_close_tag_missing_angle_bracket():
+    text = (f"<{DBAR} calls>\n<{DBAR} invoke name=\"exec_command\">\n"
+            f"<{DBAR} parameter name=\"arguments\" string=\"true\">true"
+            f"{DBAR} parameter>\n"
+            f"<{DBAR} parameter name=\"cmd\" string=\"true\">echo MARK"
+            f"</{DBAR} parameter>\n</{DBAR} invoke>\n</{DBAR} calls>")
+    calls, clean = mike.parse_tool_calls(text)
+    assert calls == [{"name": "exec_command", "arguments": {"cmd": "echo MARK"}}]
+    assert "DSML" not in clean
+
+
+def test_dsml_repetition_collapse_keeps_the_fullest_parameter():
+    repeats = "".join(
+        f"<{DBAR} parameter name=\"cmd\">cd /tmp && git status</{DBAR} parameter>\n"
+        f"<{DBAR} parameter name=\"cmd\">cd /tmp"
+        for _ in range(10)
+    )
+    text = ("Let me look.\n\n"
+            f"<{DBAR} calls>\n<{DBAR} invoke name=\"exec_command\">\n" + repeats)
+    calls, clean = mike.parse_tool_calls(text)
+    assert calls == [{"name": "exec_command",
+                      "arguments": {"cmd": "cd /tmp && git status"}}]
+    assert clean == "Let me look."
+
+
 # --------------------------------------------------------------------------- #
 # 2. Thinking-block stripper                                                   #
 # --------------------------------------------------------------------------- #

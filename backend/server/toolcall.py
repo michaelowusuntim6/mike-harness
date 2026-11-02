@@ -266,9 +266,11 @@ def _loads_tool_obj(raw: str) -> Optional[dict]:
 
 # The token is ``｜DSML｜`` in the reference; the web model sometimes doubles or
 # even triples the full-width bars, so every occurrence accepts one or more.
+# The leading ``<`` is optional because a collapsed model drops it
+# (``true｜｜DSML｜｜ parameter>``), and the fragment is still markup, not data.
 _DSML_TOKEN = r"(?:\uff5c)+DSML(?:\uff5c)+"
 _DSML_TAG_RE = re.compile(
-    r"<\s*(?P<closing>/)?\s*" + _DSML_TOKEN +
+    r"<?\s*(?P<closing>/)?\s*" + _DSML_TOKEN +
     r"\s*(?P<word>invoke|parameter|tool_calls|calls)?"
     r"(?P<attrs>[^<>]*?)>",
     re.IGNORECASE | re.DOTALL,
@@ -326,6 +328,24 @@ def _dsml_value(raw: str, is_string: bool):
         return value
 
 
+def _store_argument(args: dict, name: str, value) -> None:
+    """Record one parameter value, tolerating repetition-collapse duplicates.
+
+    A collapsed model re-emits the same parameter dozens of times and the final
+    copy is usually cut off by the token limit, so a shorter duplicate never
+    replaces a fuller one.
+    """
+    previous = args.get(name)
+    if name in args:
+        if isinstance(value, str) and isinstance(previous, str):
+            if len(value) > len(previous):
+                args[name] = value
+            return
+        if value in ("", None, {}, []):
+            return
+    args[name] = value
+
+
 def parse_dsml_calls(text: str) -> list[dict]:
     """Extract tools calls from native DSML markup (V4/V4.1, any bar width)."""
     text = text or ""
@@ -339,8 +359,9 @@ def parse_dsml_calls(text: str) -> list[dict]:
     def flush_value(end: int) -> None:
         nonlocal in_value
         if in_value and current is not None and value_name:
-            current["arguments"][value_name] = _dsml_value(
-                text[value_start:end], value_is_string
+            _store_argument(
+                current["arguments"], value_name,
+                _dsml_value(text[value_start:end], value_is_string),
             )
         in_value = False
 
@@ -364,8 +385,9 @@ def parse_dsml_calls(text: str) -> list[dict]:
             flush_value(match.start())
 
         if word in ("tool_calls", "calls"):
-            if closing:
-                flush_call()
+            # A container left open by truncation must not swallow the next
+            # block's parameters, so opening a container closes pending work.
+            flush_call()
             continue
         if word == "invoke":
             if closing:
@@ -419,6 +441,43 @@ def strip_dsml(text: str) -> str:
     return _DSML_BARE_TOKEN_RE.sub("", out)
 
 
+# The bridge teaches the JSON envelope ``{"name": ..., "arguments": { ... }}``
+# and the model sometimes transposes that shape straight into DSML, emitting one
+# parameter literally named ``arguments`` holding the whole payload (or a stray
+# ``arguments=true`` marker). Such a parameter is packaging, not an argument, so
+# it is folded back onto the call before dispatch.
+_WRAPPER_KEYS = ("arguments", "parameters", "args")
+_MARKER_VALUES = ("", "true", "false", "null", "none", "{}")
+
+
+def unwrap_argument_envelope(args: dict) -> dict:
+    if not isinstance(args, dict):
+        return args
+    for key in _WRAPPER_KEYS:
+        if key not in args:
+            continue
+        value = args[key]
+        inner: Optional[dict] = None
+        if isinstance(value, dict):
+            inner = value
+        elif isinstance(value, str):
+            text = value.strip()
+            if text.startswith("{") and text.endswith("}"):
+                try:
+                    parsed = json.loads(text)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    inner = parsed
+        if inner is not None:
+            merged = {name: item for name, item in args.items() if name != key}
+            merged.update(inner)
+            return unwrap_argument_envelope(merged)
+        if str(value).strip().lower() in _MARKER_VALUES:
+            del args[key]
+    return args
+
+
 def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     """Return (calls, clean_text) for both JSON envelopes and DSML calls."""
     if not text:
@@ -445,6 +504,8 @@ def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     # call; those fragments are cleaned from the arguments instead.
     calls.extend(parse_dsml_calls(clean))
     clean = strip_dsml(clean)
+    for call in calls:
+        call["arguments"] = unwrap_argument_envelope(call.get("arguments"))
     return calls, clean.strip()
 
 

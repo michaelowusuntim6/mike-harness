@@ -649,31 +649,62 @@ _FENCED_JSON_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 #     <... invoke name="tool" />            (self-closing -> {} args)
 #     <... invoke name="tool" path="x" />   (attribute-style args, superset)
 _DSML_TOKEN = "\uff5cDSML\uff5c"  # full-width bar U+FF5C, not ASCII '|'
+# The web model doubles or triples the bars ("<｜｜DSML｜｜"), so every pattern
+# accepts one or more on each side.
+_BARS = r"(?:\uff5c)+DSML(?:\uff5c)+"
 _DSML_OPEN_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*invoke\b([^<>]*?)(/?)>", re.IGNORECASE
+    r"<\s*" + _BARS + r"\s*invoke\b([^<>]*?)(/?)>", re.IGNORECASE
 )
 _DSML_CLOSE_RE = re.compile(
-    r"</\s*\uff5cDSML\uff5c\s*invoke\s*>", re.IGNORECASE
+    r"</\s*" + _BARS + r"\s*invoke\s*>", re.IGNORECASE
 )
 _DSML_PARAM_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*parameter\b([^<>]*?)>(.*?)(?:"
-    r"</\s*\uff5cDSML\uff5c\s*parameter\s*>|$)",
+    r"<\s*" + _BARS + r"\s*parameter\b([^<>]*?)>(.*?)(?:"
+    r"</\s*" + _BARS + r"\s*parameter\s*>|"
+    r"(?=<\s*" + _BARS + r"\s*(?:parameter|invoke)\b)|$)",
     re.DOTALL | re.IGNORECASE,
 )
 _DSML_ATTR_RE = re.compile(r'([A-Za-z_][\w.-]*)\s*=\s*"([^"]*)"')
 # The container block spans from a (V4 or V4.1) calls-open tag to its close.
 _DSML_BLOCK_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>.*?"
-    r"</\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>",
+    r"<\s*" + _BARS + r"\s*(?:tool_calls|calls)\s*>.*?"
+    r"</\s*" + _BARS + r"\s*(?:tool_calls|calls)\s*>",
     re.DOTALL | re.IGNORECASE,
 )
 _DSML_CALLS_OPEN_RE = re.compile(
-    r"<\s*\uff5cDSML\uff5c\s*(?:tool_calls|calls)\s*>", re.IGNORECASE
+    r"<\s*" + _BARS + r"\s*(?:tool_calls|calls)\s*>", re.IGNORECASE
 )
-_DSML_INVOKE_OPEN_BARE_RE = re.compile(r"<\s*\uff5cDSML\uff5c\s*invoke\b", re.IGNORECASE)
+_DSML_INVOKE_OPEN_BARE_RE = re.compile(r"<\s*" + _BARS + r"\s*invoke\b", re.IGNORECASE)
 _DSML_PARAM_ANY_RE = re.compile(
-    r"</?\s*\uff5cDSML\uff5c\s*parameter\b[^<>]*>", re.IGNORECASE
+    r"</?\s*" + _BARS + r"\s*parameter\b[^<>]*>", re.IGNORECASE
 )
+
+
+# A collapsed model sometimes drops the leading "<" of a DSML close tag
+# ("true｜｜DSML｜｜ parameter>"). The tag is still markup, so restore the bracket
+# before scanning; otherwise the fragment is read as part of the value.
+_DSML_STRAY_TAG_RE = re.compile(
+    r"(?<![<>/\uff5c])((?:\uff5c)+DSML(?:\uff5c)+[^<>]*?>)"
+)
+_DSML_CLOSE_WORD_RE = re.compile(r"(?:parameter|invoke|calls|tool_calls)\s*$", re.I)
+
+
+def _normalize_dsml_tags(text: str) -> str:
+    """Restore the leading "<" that a collapsed model drops from DSML tags.
+
+    Both forms appear in the wild ("true｜｜DSML｜｜ parameter>" and
+    "｜｜DSML｜｜ parameter name=\"cmd\">..."); either way the fragment is markup,
+    and leaving it unbracketed would swallow it into an argument value.
+    """
+    if not text:
+        return text
+
+    def repair(match: "re.Match[str]") -> str:
+        tag = match.group(1)
+        stem = tag[:-1].rstrip()
+        return ("</" if _DSML_CLOSE_WORD_RE.search(stem) else "<") + tag
+
+    return _DSML_STRAY_TAG_RE.sub(repair, text)
 
 
 def _attr_value(attrs: str, key: str) -> Optional[str]:
@@ -698,11 +729,25 @@ def _attrs_to_args(attrs: str) -> dict:
 
 
 def _parse_param_tags(body: str) -> dict:
-    """Collect child ``<｜DSML｜ parameter>`` tags into an arguments dict."""
+    """Collect child ``<｜DSML｜ parameter>`` tags into an arguments dict.
+
+    A collapsed model re-emits the same parameter over and over until the token
+    limit cuts it off, so a duplicate never replaces a fuller earlier value.
+    """
     args: dict = {}
     for pm in _DSML_PARAM_RE.finditer(body or ""):
         attrs = pm.group(1)
-        args[_attr_value(attrs, "name") or "value"] = _dsml_value(pm.group(2), attrs)
+        key = _attr_value(attrs, "name") or "value"
+        value = _dsml_value(pm.group(2), attrs)
+        previous = args.get(key)
+        if key in args:
+            if isinstance(value, str) and isinstance(previous, str):
+                if len(value) > len(previous):
+                    args[key] = value
+                continue
+            if value in ("", None, {}, []):
+                continue
+        args[key] = value
     return args
 
 
@@ -786,6 +831,42 @@ def strip_dsml(text: str) -> str:
     return out
 
 
+# The prompt teaches the JSON envelope {"name": ..., "arguments": { ... }} and
+# the model sometimes transposes that shape straight into DSML, emitting one
+# parameter literally named "arguments" holding the whole payload (or a stray
+# arguments=true marker). Such a parameter is packaging, not an argument.
+_ARGUMENT_WRAPPER_KEYS = ("arguments", "parameters", "args")
+_ARGUMENT_MARKER_VALUES = ("", "true", "false", "null", "none", "{}")
+
+
+def _unwrap_argument_envelope(args: dict) -> dict:
+    if not isinstance(args, dict):
+        return args
+    for key in _ARGUMENT_WRAPPER_KEYS:
+        if key not in args:
+            continue
+        value = args[key]
+        inner: Optional[dict] = None
+        if isinstance(value, dict):
+            inner = value
+        elif isinstance(value, str):
+            body = value.strip()
+            if body.startswith("{") and body.endswith("}"):
+                try:
+                    parsed = json.loads(body)
+                except (json.JSONDecodeError, ValueError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    inner = parsed
+        if inner is not None:
+            merged = {name: item for name, item in args.items() if name != key}
+            merged.update(inner)
+            return _unwrap_argument_envelope(merged)
+        if str(value).strip().lower() in _ARGUMENT_MARKER_VALUES:
+            del args[key]
+    return args
+
+
 def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     """Parse ``<tool_call>`` envelopes out of an assistant message.
 
@@ -796,6 +877,7 @@ def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     """
     if not text:
         return [], ""
+    text = _normalize_dsml_tags(text)
 
     calls: list[dict] = []
     for raw in _TOOL_CALL_BLOCK_RE.findall(text):
@@ -818,6 +900,9 @@ def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     # Native DeepSeek DSML syntax (what the free web model actually emits).
     calls.extend(parse_dsml_calls(text))
     clean = strip_dsml(clean)
+
+    for call in calls:
+        call["arguments"] = _unwrap_argument_envelope(call.get("arguments"))
 
     return calls, clean.strip()
 

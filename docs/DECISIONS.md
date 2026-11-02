@@ -51,10 +51,36 @@ and config keys are unchanged.
 **Rationale.** The binary is installed as `mike`, so printing `codex resume`
 handed users a command that does not exist.
 
+## v0.11 D5. Degenerate DSML output still yields a tool call
+
+**Decision.** The bridge recovers a usable call from the model's repetition
+collapse instead of ending the turn. Four shapes are now accepted, in both the
+modular bridge (`server/toolcall.py`) and the standalone `mike.py` parser:
+doubled bars (`<｜｜DSML｜｜ …>`); a close tag that lost its `<`
+(`true｜｜DSML｜｜ parameter>`); the same parameter re-emitted until the token
+limit truncates the last copy, where the *fullest* value wins rather than the
+last one; and the whole payload wrapped in a single parameter named `arguments`
+(or a bare `arguments` marker such as `true`), which is unpacked onto the call
+or dropped. An unclosed container also no longer absorbs the parameters of the
+next block.
+
+**Rationale.** The prompt teaches the JSON envelope
+`{"name": …, "arguments": { … }}`, and when the model transposes that shape into
+its native DSML the result is `{"arguments": "{\"cmd\": …}"}` — `exec_command`
+arrives with no `cmd`, the tool errors, and the agent stops mid-task. The
+collapse variants came from live sessions in which a truncated block produced
+the same dead end.
+
+**Limitation.** Longest-value-wins assumes a repeated parameter is a collapse
+artifact. A model that deliberately shortens a parameter keeps the older,
+longer value.
+
 ## v0.11 verification
 
-- `cd backend && venv/bin/python -m pytest tests/` → 129 passed (defaults,
-  compaction threshold, and status-bar assertions moved to 120,000/96,000).
+- `cd backend && venv/bin/python -m pytest tests/` → 141 passed (defaults,
+  compaction threshold, and status-bar assertions moved to 120,000/96,000; the
+  D5 collapse and wrapper shapes are covered in
+  `tests/test_responses_bridge.py` and `tests/test_mike.py`).
 - `cargo test -p codex-cli --lib` → 16 passed; `cargo test -p codex-utils-cli
   --lib` → 21 passed; `cargo test -p codex-client --lib` → 2 passed;
   `cargo test -p codex-model-provider-info --lib` → 40 passed; core
