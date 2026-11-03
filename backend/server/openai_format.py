@@ -82,8 +82,9 @@ def _id() -> str:
 
 
 def _est_tokens(text: str) -> int:
-    """Rough token estimate (~4 chars/token) — DeepSeek's web API gives us no count."""
-    return max(1, len(text) // 4)
+    """Conservative fallback estimate (~3 chars/token); only used when no exact
+    tokenizer result exists, because an over-estimate is the safe direction."""
+    return max(1, len(text) // 3)
 
 
 def completion_response(model: str, content: str, prompt: str,

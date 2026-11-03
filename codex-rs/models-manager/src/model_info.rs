@@ -161,9 +161,9 @@ pub fn model_info_from_slug(slug: &str) -> ModelInfo {
         info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
         info.supports_reasoning_summary_parameter = false;
         info.default_reasoning_summary = ReasoningSummary::None;
-        info.context_window = Some(400_000);
-        info.max_context_window = Some(400_000);
-        info.auto_compact_token_limit = Some(320_000);
+        info.context_window = Some(128_000);
+        info.max_context_window = Some(128_000);
+        info.auto_compact_token_limit = Some(102_400);
         // Match `mike-models.json`: the default 95% reservation would make the
         // footer show `/ 380,000` whenever the catalog is missing.
         info.effective_context_window_percent = 100;

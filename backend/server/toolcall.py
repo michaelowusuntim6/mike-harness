@@ -196,9 +196,13 @@ def _clean_arg_string(value: str) -> str:
     """Remove leaked DSML markup from one argument string.
 
     Values the model left untouched are returned verbatim; when a fragment was
-    removed, surrounding whitespace from the markup is trimmed as well.
+    removed, surrounding whitespace from the markup is trimmed as well. Any
+    leftover full-width bar (U+FF5C) is markup too: real shell text uses the
+    ASCII pipe, so it never belongs in an argument.
     """
     cleaned = _strip_orphan_dsml(value)
+    if "\uff5c" in cleaned:
+        cleaned = cleaned.replace("\uff5c", "")
     if cleaned == value:
         return value
     return cleaned.strip()
@@ -478,6 +482,102 @@ def unwrap_argument_envelope(args: dict) -> dict:
     return args
 
 
+# --------------------------------------------------------------------------- #
+# Wrapper-agnostic JSON extraction                                              #
+# --------------------------------------------------------------------------- #
+#
+# The model wraps one payload in whatever it hallucinates that turn —
+# "<｜｜DSML｜｜ calls>", "<call>", "<｜call>", "<tool_call>", a code fence, or
+# nothing at all when it panics. Rather than regex every possible tag, find the
+# JSON object itself by matching braces (quote- and escape-aware), validate it,
+# then delete the object together with whatever markup sat around it.
+
+_JSON_TOOL_CALL_RE = re.compile(r'^\{\s*"name"\s*:', re.IGNORECASE)
+
+# Short wrapper words the model alternates between, with optional full-width bars
+# (and an optional bare DSML token) glued on either side of the word.
+_TOOL_WRAPPER_TAG_RE = re.compile(
+    r"<[\s/]*(?:\uff5c+DSML\uff5c+|\uff5c+)?[\s/]*"
+    r"(?:tool_call|tool_calls|calls|call|invoke|parameter|tool_result)"
+    r"(?:[\s/]*(?:\uff5c+DSML\uff5c+|\uff5c+))?[^<>]*>",
+    re.IGNORECASE | re.DOTALL,
+)
+_TRAILING_TAG_RE = re.compile(r"(<[^<>]*>)\s*$", re.DOTALL)
+_LEADING_TAG_RE = re.compile(r"^\s*(<[^<>]*>)", re.DOTALL)
+
+
+def _json_object_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of top-level ``{...}`` objects, ignoring braces inside strings."""
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth:
+            depth -= 1
+            if depth == 0:
+                spans.append((start, index + 1))
+    return spans
+
+
+def _is_wrapper_tag(tag: str) -> bool:
+    return bool(_TOOL_WRAPPER_TAG_RE.fullmatch(tag) or _DSML_TAG_RE.fullmatch(tag))
+
+
+def _adjacent_wrapper(text: str, span_start: int, span_end: int) -> bool:
+    """True when a tool-wrapper tag sits immediately around the JSON object."""
+    before = _TRAILING_TAG_RE.search(text[:span_start] or "")
+    if before and _is_wrapper_tag(before.group(1)):
+        return True
+    after = _LEADING_TAG_RE.search(text[span_end:] or "")
+    return bool(after and _is_wrapper_tag(after.group(1)))
+
+
+def parse_wrapperless_calls(text: str) -> tuple[list[dict], str]:
+    """Extract JSON tool calls from arbitrary or absent wrappers.
+
+    A payload that sits next to a wrapper tag is taken as a call. A bare one is
+    only taken when it accounts for the whole message: assistant prose that
+    happens to quote ``{"name": ...}`` must not be eaten.
+    """
+    calls: list[dict] = []
+    clean = text
+    # Remove right-to-left so each deletion leaves the earlier spans' offsets
+    # intact.
+    for start, end in reversed(_json_object_spans(clean)):
+        body = clean[start:end].strip()
+        if not _JSON_TOOL_CALL_RE.match(body):
+            continue
+        leftover = (clean[:start] + clean[end:]).strip()
+        if not _adjacent_wrapper(clean, start, end) and leftover:
+            continue
+        parsed = _loads_tool_obj(body)
+        if parsed is None:
+            continue
+        calls.append(parsed)
+        clean = f"{clean[:start]}\n{clean[end:]}"
+    calls.reverse()
+    if calls:
+        clean = _TOOL_WRAPPER_TAG_RE.sub("", clean)
+    clean = re.sub(r"\n{3,}", "\n\n", clean)
+    return calls, clean.strip()
+
+
 def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     """Return (calls, clean_text) for both JSON envelopes and DSML calls."""
     if not text:
@@ -503,10 +603,18 @@ def parse_tool_calls(text: str) -> tuple[list[dict], str]:
     # remainder keeps markup leaked inside an envelope from becoming a second
     # call; those fragments are cleaned from the arguments instead.
     calls.extend(parse_dsml_calls(clean))
+
+    if not calls:
+        # Nothing matched the known shapes: try the wrapper-agnostic path before
+        # concluding the message carries no call at all.
+        generic, clean = parse_wrapperless_calls(clean)
+        calls.extend(generic)
+
     clean = strip_dsml(clean)
     for call in calls:
         call["arguments"] = unwrap_argument_envelope(call.get("arguments"))
-    return calls, clean.strip()
+    # A stray full-width bar is markup, never content.
+    return calls, clean.replace("\uff5c", "").strip()
 
 
 def looks_like_tool_syntax(text: str) -> bool:
@@ -514,6 +622,9 @@ def looks_like_tool_syntax(text: str) -> bool:
     return (
         "dsml" in low
         or "<tool_call>" in low
+        or "<call>" in low
+        or "<｜call>" in low
         or re.search(r"invoke\s+name\s*=", low) is not None
         or "```json" in low
+        or re.search(r'\{\s*"name"\s*:', low) is not None
     )

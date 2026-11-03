@@ -89,7 +89,7 @@ fn managed_policy_limit_includes_replacement_notice_and_markers() -> io::Result<
     .expect_text()
     .len();
     let mut requirement = Sourced::new(
-        "x".repeat(approx_bytes_for_tokens(MAX_MANAGED_DEVELOPER_INSTRUCTIONS_TOKENS) - overhead),
+        "x".repeat(conservative_bytes_for_tokens(MAX_MANAGED_DEVELOPER_INSTRUCTIONS_TOKENS) - overhead),
         RequirementSource::Unknown,
     );
     validate_managed_developer_instructions(Some(&requirement))?;

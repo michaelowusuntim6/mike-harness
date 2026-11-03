@@ -290,3 +290,99 @@ unchanged.
   *assistant* item, not a user message, so a prefix scan on user content cannot
   be the primary signal. The message-less conversation id carried the rewind, as
   designed above.
+
+## v0.14 D1. Wrapper-agnostic tool-call extraction
+
+**Decision.** `server/toolcall.py` no longer tries to recognise each wrapper the
+model invents. It finds candidate JSON objects by matching braces (quote- and
+escape-aware, so nested objects and braces inside strings are handled), validates
+them with `json.loads`, requires a `"name"` key, then deletes the object together
+with whatever markup sat around it. The per-shape paths that already worked
+(envelope, fenced JSON, DSML) are unchanged and still tried first, so this is a
+last resort rather than a rewrite.
+
+Wrappers now accepted, all from live output: a bare DSML container tag around a
+JSON object, a plain `call` tag pair, the same with a full-width bar glued to the
+open tag (with and without the bar on the close), the standard envelope, and no
+wrapper at all when the model panics.
+
+**Guard.** A JSON object is only treated as a call when a recognised wrapper tag
+sits immediately adjacent to it, or when the object accounts for the whole
+message. Assistant prose that happens to quote an example payload is therefore
+never eaten — there is a test for exactly that, plus one for malformed JSON
+inside a wrapper, which must not become a call.
+
+**Also new.** Full-width bars are stripped from arguments and from user-visible
+text, the multiple-object path removes spans right-to-left so offsets stay valid,
+and `looks_like_tool_syntax` recognises the new shapes so the corrective nudge
+fires when a wrapper appears but nothing parses.
+
+## v0.14 D2. Context window 128,000 tokens (supersedes v0.12 D2)
+
+**Decision.** `context_window` and `max_context_window` become 128,000 with
+`auto_compact_token_limit = 102400` (80%), in the catalog, the Rust fallback
+metadata, `backend/mike.py` defaults and `mike.toml.example`.
+`effective_context_window_percent` stays 100, so the footer reads `/ 128,000`.
+Sanity check against the protocol helpers: `usable_context_window()` = 128,000
+and `auto_compact_token_limit()` = `min(102400, 115200)` = 102,400.
+
+**Rationale.** The 400,000 window was a deliberate bet that the web chat would
+hold up; it is being walked back to a size that stays inside the range DeepSeek
+actually handles well, with compaction firing earlier. Reverting is still one
+JSON file (`mike-models.json`) or the two `model_context_window` /
+`model_auto_compact_token_limit` config keys.
+
+## v0.14 D3. Two byte heuristics: 4 for budgets, 3 for guards
+
+**Decision.** The estimator is split instead of retuned. `APPROX_BYTES_PER_TOKEN`
+stays at 4 and keeps driving every token-to-byte *budget* conversion
+(`approx_token_count`, `approx_bytes_for_tokens`, `approx_tokens_from_byte_count`),
+so truncation caps and tool-output sizes are bit-for-bit what they were. New
+`CONSERVATIVE_BYTES_PER_TOKEN = 3` backs `conservative_bytes_for_tokens()` and
+`conservative_tokens_from_byte_count()`, used only by absolute-limit guards —
+oversized thread instructions (`agents_md_manager.rs`) and managed developer
+instructions (`managed_developer_instructions.rs`) — and by the Python fallback
+estimators (`token_counter._heuristic`, `openai_format._est_tokens`,
+`mike.py`'s heuristic path).
+
+**Rationale.** DeepSeek BPE averages nearer three characters per token, so a
+guard built on four lets oversized text through, and over-estimating is the safe
+direction when the only consequence is an earlier refusal. It is the *unsafe*
+direction for a truncation budget: dividing bytes by three there converts a token
+cap into a 25% smaller byte cap, so the model would quietly see about a quarter
+less tool output per call. Measured while prototyping the single-constant version:
+26 additional core tests failed, not because the code broke but because every
+truncation output shrank — which is a behavior change dressed up as a math fix.
+
+**Boundary, restated.** Exact accounting is unaffected either way: context totals
+and compaction triggers use the embedded BPE tokenizer. The heuristics only cover
+truncation budgets (4) and the no-tokenizer fallback plus input guards (3).
+
+## v0.14 verification
+
+- `cd backend && venv/bin/python -m pytest tests/` → 160 passed, including the
+  new `tests/test_hallucinated_wrappers.py` (all five observed wrappers, nested
+  braces, two calls in one message, prose that quotes a payload, malformed JSON).
+- `cargo test -p codex-core --lib` → 2840 passed, 15 failed, and the 15 are
+  byte-identical to the same suite run on an unmodified HEAD worktree (the
+  pre-existing drift: missing code-mode host binary, guardian/model-catalog and
+  reasoning-effort fixtures). One entry,
+  `exec::tests::process_exec_tool_call_cancellation_allows_sigterm_cleanup`,
+  passes when run alone and is parallel-run flaky.
+- `cargo test -p codex-utils-string --lib` → 25 passed (including the new
+  guard-vs-budget ratio test); `codex-utils-output-truncation` → 21 passed with
+  every truncation literal untouched; `codex-models-manager` → 57 passed with the
+  128,000 / 102,400 pins; `codex-protocol` → 369; `codex-cli` → 16;
+  `codex-utils-cli` → 21; `codex-client` → 2; `codex-model-provider-info` → 40.
+- Release build (81m 30s, exit 0) and `./scripts/install_mike.sh`; manual PTY
+  smoke on the installed binary rendered `Ctx: 2,511 / 128,000` with
+  `Token usage: total=2,511 input=2,509 output=2` and the `mike resume` hint.
+  (The first attempt hung because the bridge's session token had aged past its
+  6-hour limit and a dead Chrome had left `SingletonLock` behind in the CDP
+  profile; clearing those three stale symlinks and restarting restored the
+  headless refresh.)
+- Why the split constant is worth it: with the single-constant version, core went
+  to 41 failures and two of them were not stale numbers at all — the guardian
+  interruption message no longer fit its own token budget, and truncated tool
+  output exceeded `policy × 1.2` bytes — i.e. the model would have seen ~25% less
+  output per call. Splitting the estimators returned every one of those.

@@ -139,7 +139,7 @@ REPO_CONFIG = ROOT / "mike.toml"
 # Every key is optional; these are the defaults. This block is the ONLY place
 # these literals occur in mike.py.
 DEFAULTS = {
-    "max_context": 400_000,        # total tokens before compaction is possible
+    "max_context": 128_000,        # total tokens before compaction is possible
     "compact_threshold": 0.80,     # fraction of max_context that triggers compaction
     "keep_recent_turns": 6,        # turns preserved verbatim across a compaction
     "server_host": "127.0.0.1",
@@ -377,7 +377,7 @@ def atomic_write_json(path: Path, obj: Any) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 4. Token estimation (DeepSeek BPE, else tiktoken, else len//4)               #
+# 4. Token estimation (DeepSeek BPE, else tiktoken, else len//3)               #
 # --------------------------------------------------------------------------- #
 
 class TokenCounter:
@@ -424,7 +424,7 @@ class TokenCounter:
                 return len(self._enc.encode(text))
             except Exception:
                 pass
-        return max(1, len(text) // 4)
+        return max(1, len(text) // 3)
 
     def count_messages(self, messages: Iterable[dict]) -> int:
         total = 0

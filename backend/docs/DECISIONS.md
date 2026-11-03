@@ -126,10 +126,10 @@ with one warning instead of raising.
 actually being counted.
 
 ### C3. Thresholds
-**Decision.** `max_context = 400_000` (overridable via `MIKE_MAX_CONTEXT`),
-`compact_threshold = 0.80` → trigger at `320_000`, `KEEP_RECENT_TURNS = 6`.
-**Rationale.** Raised from 120,000 once counting became exact; see the
-supersession note under v0.12 D2 in `../../docs/DECISIONS.md`.
+**Decision.** `max_context = 128_000` (overridable via `MIKE_MAX_CONTEXT`),
+`compact_threshold = 0.80` → trigger at `102_400`, `KEEP_RECENT_TURNS = 6`.
+**Rationale.** Walked down from 400,000 to stay well inside what the web chat
+handles; see v0.14 D2 in `../../docs/DECISIONS.md`.
 **Alternatives.** None sensible.
 
 ### C4. Session files are atomic and human-readable
@@ -293,7 +293,7 @@ full 8-message transcript (compaction did not truncate it).
 | B | starts the server, connects, one model `DeepSeek V4.1 Flash` | ✅ |
 | C | sibling dirs renamed → mike still works | ✅ (restored) |
 | D | no `openrouter`/`anthropic` in mike.py | ✅ |
-| E | `/tokens` threshold = 400,000 | ✅ |
+| E | `/tokens` threshold = 400,000 | ✅ (transcript from that era; the threshold is 102,400 today) |
 | F | `/compact` summary has all seven sections | ✅ |
 | G | `resume` lists sessions (name/timestamp/preview) and restores | ✅ |
 | H | forced rollover → `-cont1` file seeded with the summary header | ✅ |

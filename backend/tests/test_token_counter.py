@@ -70,7 +70,7 @@ def test_missing_asset_falls_back_without_crashing(monkeypatch):
 
     assert token_counter.implementation() == "heuristic"
     assert token_counter.is_exact() is False
-    assert token_counter.count_tokens("Hello, world!") == len("Hello, world!") // 4
+    assert token_counter.count_tokens("Hello, world!") == len("Hello, world!") // 3
     assert token_counter.count_tokens("") == 0
 
     event = json.loads(

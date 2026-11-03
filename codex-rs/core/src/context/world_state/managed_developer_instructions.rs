@@ -9,8 +9,8 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::ContentItemKind;
 use codex_protocol::models::ContentItemMetadata;
 use codex_protocol::models::input_text;
-use codex_utils_string::approx_bytes_for_tokens;
-use codex_utils_string::approx_tokens_from_byte_count;
+use codex_utils_string::conservative_bytes_for_tokens;
+use codex_utils_string::conservative_tokens_from_byte_count;
 use serde::Deserialize;
 use serde::Serialize;
 use std::io;
@@ -71,8 +71,8 @@ pub(crate) fn validate_managed_developer_instructions(
     .unwrap_or_default()
     .len();
     let rendered_bytes = requirement.value.len().saturating_add(overhead);
-    if rendered_bytes > approx_bytes_for_tokens(MAX_MANAGED_DEVELOPER_INSTRUCTIONS_TOKENS) {
-        let estimated_tokens = approx_tokens_from_byte_count(rendered_bytes);
+    if rendered_bytes > conservative_bytes_for_tokens(MAX_MANAGED_DEVELOPER_INSTRUCTIONS_TOKENS) {
+        let estimated_tokens = conservative_tokens_from_byte_count(rendered_bytes);
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(

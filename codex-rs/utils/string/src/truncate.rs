@@ -5,6 +5,28 @@ use std::ops::Range;
 
 const APPROX_BYTES_PER_TOKEN: usize = 4;
 
+/// Bytes per token assumed by *absolute limit guards*, deliberately smaller than
+/// [`APPROX_BYTES_PER_TOKEN`]. DeepSeek's BPE averages nearer three characters per
+/// token, so a guard built on four lets oversized text through.
+///
+/// Truncation budgets keep the four-bytes-per-token conversion on purpose: those
+/// numbers decide how much tool output the model is allowed to see, and tightening
+/// them would silently cut about a quarter of it. Guards only ever reject input,
+/// so being pessimistic there costs nothing but an earlier refusal.
+const CONSERVATIVE_BYTES_PER_TOKEN: usize = 3;
+
+/// Byte allowance for `tokens` under the conservative guard ratio.
+pub const fn conservative_bytes_for_tokens(tokens: usize) -> usize {
+    tokens.saturating_mul(CONSERVATIVE_BYTES_PER_TOKEN)
+}
+
+/// Byte count to token count under the conservative guard ratio.
+pub fn conservative_tokens_from_byte_count(bytes: usize) -> u64 {
+    let bytes = bytes as u64;
+    bytes.saturating_add((CONSERVATIVE_BYTES_PER_TOKEN as u64).saturating_sub(1))
+        / (CONSERVATIVE_BYTES_PER_TOKEN as u64)
+}
+
 /// Replaces one UTF-8-aligned range with a notice. Callers can apply the same
 /// edit to annotated text without losing the sources of the retained slices.
 pub struct TextTruncation {

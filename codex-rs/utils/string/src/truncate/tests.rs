@@ -1,3 +1,7 @@
+use super::approx_bytes_for_tokens;
+use super::approx_tokens_from_byte_count;
+use super::conservative_bytes_for_tokens;
+use super::conservative_tokens_from_byte_count;
 use super::split_string;
 use super::truncate_middle_chars;
 use super::truncate_middle_with_marker;
@@ -162,4 +166,17 @@ fn truncate_middle_with_marker_keeps_a_prefix_when_the_marker_does_not_fit() {
         truncate_middle_with_marker("🦀abc", /*max_bytes*/ 4, "marker"),
         "🦀"
     );
+}
+
+#[test]
+fn conservative_guard_ratio_is_tighter_than_the_truncation_ratio() {
+    // Guards assume 3 bytes/token, truncation keeps 4, so the same byte count
+    // looks larger to a guard than to a budget.
+    assert_eq!(conservative_bytes_for_tokens(100), 300);
+    assert_eq!(approx_bytes_for_tokens(100), 400);
+    assert_eq!(conservative_tokens_from_byte_count(301), 101);
+    assert_eq!(approx_tokens_from_byte_count(301), 76);
+    // Ceiling division: no silent rounding down past a limit.
+    assert_eq!(conservative_tokens_from_byte_count(1), 1);
+    assert_eq!(conservative_tokens_from_byte_count(0), 0);
 }

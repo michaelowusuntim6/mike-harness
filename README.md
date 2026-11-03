@@ -66,8 +66,8 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - DeepThink on/off toggle: `/think` flips the bridge's `thinking` flag between
   off and on, matching the DeepSeek web chat toggle.
 - Live context footer: the status line shows the model and current context
-  usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 400,000 · ~/dir · thread`.
-  The 400,000-token window is compacted automatically at 80% (`320,000`).
+  usage, e.g. `DeepSeek V4.1 Flash · Ctx: 2,966 / 128,000 · ~/dir · thread`.
+  The 128,000-token window is compacted automatically at 80% (`102,400`).
 - Compaction rewinds rather than forking: `/compact` and auto-compaction keep the
   same DeepSeek chat session and re-root the thread at the summary, so the web
   sidebar does not grow a new conversation each time.
@@ -218,12 +218,12 @@ The footer status line defaults to `model`, `context-tokens`, `current-dir`,
 and `thread-name`, so it renders like:
 
 ```text
-DeepSeek V4.1 Flash · Ctx: 2,966 / 400,000 · ~/mike-harness · New Coding Session
+DeepSeek V4.1 Flash · Ctx: 2,966 / 128,000 · ~/mike-harness · New Coding Session
 ```
 
-`Ctx` is the token count currently in the context window out of its 400,000-token
+`Ctx` is the token count currently in the context window out of its 128,000-token
 capacity, measured with the embedded DeepSeek tokenizer; auto-compaction starts at
-320,000 tokens. Adjust the selection with `/statusline` or the `[tui] status_line`
+102,400 tokens. Adjust the selection with `/statusline` or the `[tui] status_line`
 array in `~/.mike/config.toml`.
 
 DeepThink matches DeepSeek's web chat, which only offers off and on. `/think`

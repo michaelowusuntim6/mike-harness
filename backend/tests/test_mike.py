@@ -251,7 +251,9 @@ def test_token_estimator_deterministic():
     counter = mike.TokenCounter("heuristic")
     text = "the quick brown fox jumps over the lazy dog" * 3
     assert counter.count(text) == counter.count(text)
-    assert counter.count("x" * 40) == 10
+    # Conservative bound: 3 bytes per token, so a 40-character string measures
+    # 13 rather than the older, optimistic 10.
+    assert counter.count("x" * 40) == 13
 
 
 def test_token_counter_create_reports_name():
@@ -283,17 +285,17 @@ class _MockCounter:
 
 def test_compactor_threshold_is_96k():
     comp = mike.Compactor(_MockCounter(0))
-    assert comp.max_context == 400_000
-    assert comp.trigger_tokens == 320_000
+    assert comp.max_context == 128_000
+    assert comp.trigger_tokens == 102_400
 
 
-def test_compactor_triggers_at_320k():
-    comp = mike.Compactor(_MockCounter(320_001))
+def test_compactor_triggers_at_102k():
+    comp = mike.Compactor(_MockCounter(102_401))
     assert comp.should_compact([{"role": "user", "content": "x"}]) is True
 
 
-def test_compactor_does_not_trigger_below_320k():
-    comp = mike.Compactor(_MockCounter(319_999))
+def test_compactor_does_not_trigger_below_102k():
+    comp = mike.Compactor(_MockCounter(102_399))
     assert comp.should_compact([{"role": "user", "content": "x"}]) is False
 
 
@@ -563,7 +565,7 @@ class TestConfig:
         self._clean_env(monkeypatch)
         cfg, src = mike.load_config({}, user_config=tmp_path / "u.toml",
                                     repo_config=tmp_path / "r.toml")
-        assert cfg["max_context"] == 400_000
+        assert cfg["max_context"] == 128_000
         assert cfg["compact_threshold"] == 0.80
         assert cfg["server_port"] == 8000
         assert cfg["model_id"] == "deepseek-v4.1-flash"
@@ -1862,7 +1864,7 @@ def test_status_bar_reports_context_plan_and_cwd(tmp_path):
     status = str(mike.render_status_bar(agent))
 
     assert "DeepSeek V4.1 Flash" in status
-    assert "Ctx " in status and "400,000" in status
+    assert "Ctx " in status and "128,000" in status
     assert "Plan 1/2" in status
     assert "cwd" not in status
 

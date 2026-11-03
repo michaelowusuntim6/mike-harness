@@ -4,7 +4,7 @@ The bridge reports ``usage`` on ``response.completed`` and the TUI footer shows
 that number verbatim, so this is the only place a true count exists: it runs on
 the same text that is handed to the upstream chat.  DeepSeek's published
 HuggingFace tokenizer is embedded in the repository; ``tiktoken``'s
-``cl100k_base`` vocabulary and the old ``len(text) // 4`` heuristic are both
+``cl100k_base`` vocabulary and the ``len(text) // 3`` fallback are both
 wrong here — measured on this repo's own source the heuristic swings from −30%
 (identifier-dense code) to +10% (long prose).
 
@@ -88,7 +88,7 @@ def _load() -> None:
             _warned = True
             log.warning(
                 "token_counter: DeepSeek tokenizer unavailable (%s); counting with "
-                "len(text)//4. Set MIKE_TOKENIZER_PATH or run scripts/install_mike.sh.",
+                "len(text)//3. Set MIKE_TOKENIZER_PATH or run scripts/install_mike.sh.",
                 problem,
             )
 
@@ -111,7 +111,7 @@ def warm() -> bool:
 
 
 def _heuristic(text: str) -> int:
-    return max(1, len(text) // 4)
+    return max(1, len(text) // 3)
 
 
 def count_tokens(text: str) -> int:

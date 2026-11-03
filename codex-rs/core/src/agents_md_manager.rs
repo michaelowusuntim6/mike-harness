@@ -13,8 +13,8 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
-use codex_utils_string::approx_bytes_for_tokens;
-use codex_utils_string::approx_tokens_from_byte_count;
+use codex_utils_string::conservative_bytes_for_tokens;
+use codex_utils_string::conservative_tokens_from_byte_count;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::Semaphore;
@@ -190,8 +190,8 @@ impl AgentsMdManager {
 const MAX_THREAD_INSTRUCTIONS_TOKENS: usize = 10_000;
 
 fn validate_thread_instruction_size(bytes: usize) -> CodexResult<()> {
-    if bytes > approx_bytes_for_tokens(MAX_THREAD_INSTRUCTIONS_TOKENS) {
-        let estimated_tokens = approx_tokens_from_byte_count(bytes);
+    if bytes > conservative_bytes_for_tokens(MAX_THREAD_INSTRUCTIONS_TOKENS) {
+        let estimated_tokens = conservative_tokens_from_byte_count(bytes);
         return Err(CodexErr::InvalidRequest(format!(
             "thread instructions exceed the limit of {MAX_THREAD_INSTRUCTIONS_TOKENS} estimated tokens ({estimated_tokens} estimated tokens provided)"
         )));
