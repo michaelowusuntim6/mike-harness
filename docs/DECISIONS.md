@@ -386,3 +386,72 @@ truncation budgets (4) and the no-tokenizer fallback plus input guards (3).
   interruption message no longer fit its own token budget, and truncated tool
   output exceeded `policy × 1.2` bytes — i.e. the model would have seen ~25% less
   output per call. Splitting the estimators returned every one of those.
+
+## v0.15 D1. A mike thread has one DeepSeek chat per account
+
+**Decision.** The bridge now identifies the signed-in DeepSeek account and keeps a
+persisted ledger of who owns which upstream chat
+(`backend/server/accounts.py`, git-ignored at `backend/session/accounts.json`):
+
+- `deepseek/client.py` gained `account_id()`, a one-way 16-character fingerprint
+  of the `users/current` user id. It is cached for the lifetime of a session and
+  dropped by `_apply_session`, which is what separates "the token rotated" from
+  "somebody else signed in".
+- `resolve()` answers, for the incoming conversation id: resume it (this account
+  owns it, or we have never seen it and claim it), resume a *bare* session id this
+  account already uses for the thread, or open a new one and link it.
+  `stamp()` records the owner and thread link of whatever session a turn landed
+  on, and skips the disk write when nothing changed.
+- The thread key is the core's `thread_id` from `client_metadata`, falling back to
+  the first session id. `/v1/responses` (the Rust core) passes the thread id;
+  `/v1/chat/completions` (`mike.py`, which persists the conversation id in its own
+  session files) has no such field and uses the fallback.
+- Re-homing returns a bare id on purpose, so the existing compaction-rewind path
+  replays the whole transcript into the new account's empty thread.
+
+**Rationale.** A `chat_session_id` belongs to exactly one account, and the core
+stores the conversation id in memory only (`state/session.rs:85`), so resuming a
+thread that another account created was an error the bridge passed straight
+through. The core adopts whatever id the bridge returns
+(`session/turn.rs:3220` `set_conversation_id`), so the whole feature is bridge
+state plus one identity call — no Rust change, no wire-format change.
+
+**Guard rails.**
+
+- Identity is fail-open: a client without `account_id()`, a payload with no
+  recognizable user id (logged as field *names* only), or a raising lookup leaves
+  the conversation id untouched, i.e. exactly the pre-v0.15 behavior. There is a
+  test per case.
+- A request with no conversation id always opens a fresh upstream thread, even
+  when the account already has a session for that thread. Clearing the id is how
+  the core signals a history reset (`HistoryReplacement::Reset` →
+  `conversation_id = None`, which is also what `mike resume` does), and reusing a
+  remembered session would quietly undo a reset.
+- `account_id()` takes an `RLock`, not a `Lock`: a lookup that meets an expired
+  token refreshes the session from inside the lock, and `_apply_session` clears
+  the same cache. A plain `Lock` deadlocked on exactly that path.
+- The identity lookup is cached per session and failures are retried no more than
+  every 300s, so `users/current` cannot put a GET in front of every turn.
+- The ledger never holds a credential: fingerprints are hashed, and only account
+  id *fields* are ever logged.
+
+## v0.15 verification
+
+- `cd backend && venv/bin/python -m pytest tests/` → 186 passed, 26 of them new in
+  `tests/test_accounts.py` (fingerprint precedence, claim / resume / re-home /
+  switch-back, restart survival, damaged and absent ledger files, no-disk-write
+  fast path, both endpoints' `_response_events` behaviour, and the fail-open
+  cases).
+- End-to-end through the real ASGI stack with a fake account-switching client
+  (scratch, not committed): five turns — new thread, same-account resume (23-char
+  tail prompt), other account replaying the first account's id (966-char full
+  transcript in a new session), first account replaying the second's id (back into
+  its own session as a bare id), and a cid-less restart (fresh thread). The saved
+  ledger held `{acctA: aaaa-1, acctB: bbbb-1}` under one `mike:thread-xyz` group.
+- No Rust source changed, so the core suites are the v0.14 numbers unchanged.
+- **Not yet verified live.** `users/current` was confirmed to exist and to answer
+  `40003 Authorization Failed (invalid token)` for an expired token, but the CDP
+  profile is signed out, so the response's field names have not been observed on
+  a real account. If the payload carries no `id`/`user_id`/`uid`/`email`/
+  `phone_number`/`username`, the bridge logs the field names it did see and stays
+  in single-account mode.

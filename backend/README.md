@@ -453,9 +453,14 @@ print(resp.choices[0].message.content)
 | `GET`  | `/v1/models` | Advertises the one model, with `aliases: [...]` |
 | `GET`  | `/healthz` | Health check (rate-limit exempt) |
 
-The `/v1/responses` bridge is stateless: the request carries the full transcript,
-which is flattened into one DeepSeek prompt. Tool calls are accepted either as
-`<tool_call>{...}</tool_call>` JSON or DeepSeek native DSML, and `task_complete`
+The `/v1/responses` bridge holds no transcript state: the request carries the
+full transcript, which is flattened into one DeepSeek prompt. Tool calls are
+accepted either as `<tool_call>{...}</tool_call>` JSON or DeepSeek native DSML,
+and `task_complete` is treated as the explicit end-of-turn signal. The one piece
+of server-side state is `server/accounts.py`, which remembers which DeepSeek
+account owns which upstream chat session so a mike thread survives an account
+switch: signing in as somebody else re-homes the thread onto a session that
+account owns, and signing back in returns it to the session it started in.<tool_call>{...}</tool_call>` JSON or DeepSeek native DSML, and `task_complete`
 is treated as the explicit end-of-turn signal.
 
 `/v1/models` returns exactly one entry:
@@ -497,17 +502,23 @@ See [examples/](examples/) for runnable versions.
 
 ## Concurrency, rate limiting, notes
 
-- The server bridges a **single** signed-in account and serializes upstream
-  calls (the PoW solver is not reentrant). Throughput is sequential.
+- The server bridges **one signed-in account at a time** and serializes upstream
+  calls (the PoW solver is not reentrant). Throughput is sequential. Re-running
+  `python -m deepseek.auth` as another account is safe: each mike thread keeps
+  one upstream chat per account (`server/accounts.py`), so the switch re-homes
+  the thread instead of breaking it, and switching back reuses its first chat.
 - A self-imposed sliding-window rate limit applies per client IP
   (`RATE_LIMIT_PER_MINUTE`, default `30`); `/healthz` is exempt. Use exponential
   backoff on `429`.
-- No real token counts: `usage` is a rough ~4-chars/token estimate.
+- `usage` is counted with DeepSeek's published tokenizer
+  (`assets/tokenizer.json`, `server/token_counter.py`), not a character guess;
+  if the asset is missing it falls back to `bytes/3` and says so in the log.
 - Most OpenAI params (`temperature`, `top_p`, `max_tokens`) are accepted but
   ignored; only `model`, `messages`, `stream`, `conversation_id`, `thinking` and
   `search` do anything.
 - Everything in `session/`, `sessions/` and `.mike_state.json` is local and
-  git-ignored.
+  git-ignored, including `session/accounts.json` (account fingerprints and
+  chat session ids — no credentials).
 
 ## Project layout
 

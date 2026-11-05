@@ -21,10 +21,12 @@ session (see `deepseek.auth`). For each message it:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
@@ -35,6 +37,7 @@ from .pow import DeepSeekPow
 
 BASE = "https://chat.deepseek.com"
 COMPLETION_PATH = "/api/v0/chat/completion"
+USERS_PATH = "/api/v0/users/current"
 
 # The [auth] refresh log lines must be visible in the server console. uvicorn only
 # attaches handlers to its own loggers (not the root), so we borrow uvicorn.error;
@@ -81,6 +84,33 @@ def rewind_cid(conversation_id: Optional[str]) -> Optional[str]:
     return _encode_cid(session_id, None)
 
 
+# A chat_session_id belongs to exactly one DeepSeek account, so resuming a thread
+# that someone else created is rejected upstream. `account_id()` below identifies
+# the signed-in account for the bridge's session/owner ledger (server/accounts.py).
+# Ordered by stability: the numeric user id first, contact handles only as
+# fallbacks so an account stays recognizable if the payload shape shifts.
+_IDENTITY_KEYS = ("id", "user_id", "uid", "email", "phone_number", "username")
+
+# A failing identity endpoint must not put an extra GET in front of every turn.
+_ACCOUNT_RETRY_SECONDS = 300.0
+
+
+def _account_fingerprint(biz: dict) -> Optional[str]:
+    """Non-reversible id for the account described by `users/current`, or None.
+
+    The value survives token refresh (unlike the bearer token itself), which is
+    what makes "same account, new token" distinguishable from "new account".
+    """
+    if not isinstance(biz, dict):
+        return None
+    for key in _IDENTITY_KEYS:
+        value = biz.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            digest = hashlib.sha256(f"deepseek-account:{value}".encode())
+            return digest.hexdigest()[:16]
+    return None
+
+
 @dataclass
 class Reply:
     """A completed chat reply plus the id to resume the conversation."""
@@ -117,6 +147,12 @@ class DeepSeekClient:
         # The wasmtime Store behind the PoW solver is not reentrant; serialise
         # access so concurrent server requests don't corrupt it.
         self._pow_lock = threading.Lock()
+        # Identity of the signed-in account; see `account_id()`. Reentrant
+        # because a lookup that hits an expired token refreshes the session from
+        # inside the lock, and `_apply_session` clears this cache.
+        self._account: Optional[str] = None
+        self._account_failed_at = 0.0
+        self._account_lock = threading.RLock()
         self._http = httpx.Client(
             base_url=BASE,
             headers=self._base_headers(),
@@ -163,6 +199,11 @@ class DeepSeekClient:
         self._http.headers["user-agent"] = new.user_agent
         self._http.cookies.clear()
         self._http.cookies.update(new.cookies)
+        # A re-capture follows either a token refresh or a sign-out/sign-in, and
+        # only the second one keeps the account. Forget who we thought we were.
+        with self._account_lock:
+            self._account = None
+            self._account_failed_at = 0.0
 
     def _refresh_after_401(self) -> None:
         """Force exactly one headless token refresh from the browser profile.
@@ -179,6 +220,65 @@ class DeepSeekClient:
             raise
         self._apply_session(new)
         log.info("[auth] token refreshed after 401, retrying")
+
+    # --- account identity -----------------------------------------------------
+
+    def _get_biz(self, path: str) -> dict:
+        r = self._http.get(path)
+        r.raise_for_status()
+        return _biz(r.json())
+
+    def account_id(self) -> Optional[str]:
+        """Fingerprint of the signed-in DeepSeek account, or None if unknown.
+
+        `users/current` returns the account behind the current token, so this
+        survives a headless refresh (same account, new token) and still changes
+        when the browser profile is re-signed-in as somebody else. The bridge
+        needs exactly that to tell "token rotated" from "user switched".
+
+        Cached for the lifetime of the session; `_apply_session` drops the cache.
+        A lookup failure returns None rather than raising — the caller then skips
+        the ownership check and behaves like a single-account install.
+        """
+        with self._account_lock:
+            if self._account is not None:
+                return self._account
+            if (self._account_failed_at
+                    and time.time() - self._account_failed_at < _ACCOUNT_RETRY_SECONDS):
+                return None
+            try:
+                account = self._fetch_account_id()
+            except Exception as exc:
+                log.warning("[auth] account lookup failed: %s", exc)
+                account = None
+            if account is None:
+                self._account_failed_at = time.time()
+                return None
+            self._account = account
+            log.info("[auth] signed in as DeepSeek account %s", account[:8])
+            return account
+
+    def _fetch_account_id(self) -> Optional[str]:
+        try:
+            biz = self._get_biz(USERS_PATH)
+        except Exception as exc:
+            if not self._is_auth_error(exc):
+                raise
+            # Expired token: refresh once, then retry once (same shape as
+            # create_chat_session). A second failure propagates to account_id().
+            self._refresh_after_401()
+            biz = self._get_biz(USERS_PATH)
+        account = _account_fingerprint(biz)
+        if account is None:
+            # Name the fields, never their values: this line is the hint that
+            # tells us DeepSeek renamed the user id, and it is not a credential
+            # leak in the log.
+            fields = sorted(biz) if isinstance(biz, dict) else type(biz).__name__
+            log.warning(
+                "[auth] users/current carried no account id (fields: %s); "
+                "multi-account re-homing is off", fields,
+            )
+        return account
 
     # --- protocol steps -----------------------------------------------------
 

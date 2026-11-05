@@ -29,6 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from deepseek.auth import LoginRequired
 from deepseek.client import _decode_cid, rewind_cid
 
+from .accounts import current_account, ledger
 from .openai_format import MOCK_TITLE_JSON, is_title_request
 
 from .toolcall import (
@@ -521,6 +522,22 @@ def _is_assistant_output(item: Any) -> bool:
     )
 
 
+def _codex_thread_id(body: dict) -> str | None:
+    """The core's thread id, sent in `client_metadata` on every request.
+
+    The conversation id lives in the core's memory only, so a resumed mike
+    process opens a new upstream thread and forgets the old id entirely. The
+    thread id is what still ties those sessions to one another, so an account
+    switch can find the session this account created for the same thread earlier.
+    """
+    meta = body.get("client_metadata")
+    if isinstance(meta, dict):
+        thread_id = meta.get("thread_id")
+        if isinstance(thread_id, str) and thread_id.strip():
+            return thread_id.strip()
+    return None
+
+
 def _is_rewound_cid(conversation_id: str) -> bool:
     """True for a conversation id that names a session but no message.
 
@@ -817,6 +834,14 @@ def _response_events(client, body: dict) -> Iterable[str]:
     full_prompt, last_action, prompt_parts = _build_prompt(body, specs)
     raw_cid = body.get("conversation_id")
     incoming_cid = raw_cid.strip() if isinstance(raw_cid, str) and raw_cid.strip() else None
+    # The browser profile can be re-signed-in as another DeepSeek account between
+    # two turns of one mike thread, and a chat session only resumes for the
+    # account that created it. Ask who is signed in now and translate the id
+    # accordingly before choosing how to resume.
+    account = current_account(client)
+    incoming_cid, rehome_thread = ledger.resolve(
+        incoming_cid, account, _codex_thread_id(body)
+    )
     upstream_cid = incoming_cid
     prompt = full_prompt
     if incoming_cid and _is_rewound_cid(incoming_cid):
@@ -924,6 +949,11 @@ def _response_events(client, body: dict) -> Iterable[str]:
             log.exception("responses: upstream stream failed")
 
         returned_cid = getattr(stream, "conversation_id", None) if stream else None
+        if returned_cid:
+            # This turn's session belongs to whoever is signed in now, and under
+            # `rehome_thread` it also becomes the alias of the thread we were
+            # asked to resume, which is what hands it back next time.
+            ledger.stamp(returned_cid, account, rehome_thread)
         raw = "".join(raw_parts)
         event_reasoning = "".join(reasoning_parts)
         calls, clean = parse_tool_calls(raw)

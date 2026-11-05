@@ -1264,11 +1264,16 @@ class _FakeHTTP:
 def _bare_client(http):
     """A DeepSeekClient built without touching network/Playwright/PoW."""
     import deepseek.client as dc
+    import threading
     import time as _t
     c = dc.DeepSeekClient.__new__(dc.DeepSeekClient)
     c._http = http
     c.session = dc.Session(token="stale", cookies={}, user_agent="UA",
                            captured_at=_t.time())
+    # __init__ normally sets the account-identity cache; _apply_session touches it.
+    c._account = None
+    c._account_failed_at = 0.0
+    c._account_lock = threading.RLock()
     return c
 
 

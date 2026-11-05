@@ -71,6 +71,11 @@ bridge is already running, `mike` attaches to it and leaves it untouched.
 - Compaction rewinds rather than forking: `/compact` and auto-compaction keep the
   same DeepSeek chat session and re-root the thread at the summary, so the web
   sidebar does not grow a new conversation each time.
+- Multi-account safe: a DeepSeek chat session belongs to the account that created
+  it, so if you sign the bridge in as a different account, resuming an old session
+  switches that thread to a chat the new account owns and continues normally.
+  Signing back in as the original account returns the thread to its original chat
+  session; the bridge remembers the mapping in `backend/session/accounts.json`.
 - Exact token counting: DeepSeek's published HuggingFace tokenizer
   (`assets/tokenizer.json`) is embedded in both the bridge and the Rust core, so
   context math counts the text that is actually sent — including system
@@ -175,6 +180,13 @@ venv/bin/python -m deepseek.auth
 This opens Chrome against DeepSeek so you can sign in. The resulting session is
 stored locally under `backend/session/` and refreshed headlessly on later runs.
 Session files contain credentials and must never be committed to Git.
+
+Signing in as a *different* DeepSeek account is supported: the next turn of an
+existing mike thread moves that thread to a chat the new account owns, and the
+bridge records both so signing back reuses the original chat. The mapping holds
+only account identifiers hashed to 16-character fingerprints — no tokens, email
+addresses or phone numbers — in `backend/session/accounts.json`, which is
+git-ignored along with the rest of `backend/session/`.
 
 ## Usage
 

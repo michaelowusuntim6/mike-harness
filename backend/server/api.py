@@ -21,6 +21,12 @@ items/tools into a prompted DeepSeek call and parses DSML or JSON tool calls.
 
 Requests under /v1 are rate limited per client IP (default 30/min, set via
 RATE_LIMIT_PER_MINUTE); /healthz is exempt.
+
+A DeepSeek chat session belongs to the account that created it. When the signed-in
+account changes mid-thread, the bridge re-homes the thread onto a session the new
+account owns and hands back that session's id, so resuming an old session keeps
+working; signing back in as the original account reuses its original session id.
+See server/accounts.py.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from starlette.concurrency import run_in_threadpool
 from deepseek.auth import LoginRequired
 from deepseek.client import DeepSeekClient
 
+from .accounts import current_account, ledger
 from .config import (
     MODEL_ALIASES,
     MODEL_DISPLAY_NAME,
@@ -153,9 +160,6 @@ async def chat_completions(req: ChatCompletionRequest):
     # per alias per process (see server.config.canonicalize).
     canonical_id, _rewritten = canonicalize(req.model)
 
-    # A thread's model is fixed when it's created, so on resume we ignore `model`
-    # (the OpenAI SDK always sends one) and let the existing thread's model stand.
-    model_type = None if req.conversation_id else resolve_model_type(canonical_id)
     prompt = messages_to_prompt(req.messages)
 
     if is_title_request(_text_of(m.content) for m in req.messages):
@@ -177,6 +181,15 @@ async def chat_completions(req: ChatCompletionRequest):
     except Exception as e:  # session/login failure
         return _error(f"Failed to initialise DeepSeek session: {e}")
 
+    # A chat session only resumes for the account that created it, and the
+    # profile can be re-signed-in as somebody else between two turns. Translate
+    # the incoming id for whoever is signed in now.
+    account = await run_in_threadpool(current_account, client)
+    conversation_id, rehome_thread = ledger.resolve(req.conversation_id, account)
+    # A thread's model is fixed when it's created, so on resume we ignore `model`
+    # (the OpenAI SDK always sends one) and let the existing thread's model stand.
+    model_type = None if conversation_id else resolve_model_type(canonical_id)
+
     if req.stream:
         def gen():
             # Catch ONLY exceptions raised by building the stream (client.stream
@@ -186,9 +199,12 @@ async def chat_completions(req: ChatCompletionRequest):
             # task, which truncates the response and yields a blank client reply.
             try:
                 stream = client.stream(
-                    prompt, conversation_id=req.conversation_id,
+                    prompt, conversation_id=conversation_id,
                     model=model_type, thinking=req.thinking, search=req.search,
                 )
+                # `create_chat_session` already ran, so the session half of this
+                # id is real even if the completion below fails.
+                ledger.stamp(stream.conversation_id, account, rehome_thread)
                 yield from stream_chunks(canonical_id, stream, thinking=req.thinking)
             except Exception as exc:
                 logger.exception("upstream streaming failed mid-response")
@@ -200,11 +216,13 @@ async def chat_completions(req: ChatCompletionRequest):
 
     try:
         reply = await run_in_threadpool(
-            client.chat, prompt, req.conversation_id,
+            client.chat, prompt, conversation_id,
             model_type, req.thinking, req.search,
         )
     except Exception as e:
         return _error(f"DeepSeek request failed: {e}")
+
+    ledger.stamp(reply.conversation_id, account, rehome_thread)
 
     return completion_response(
         canonical_id, reply.text, prompt, reply.conversation_id,
